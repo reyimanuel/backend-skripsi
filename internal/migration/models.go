@@ -4,10 +4,12 @@ import "time"
 
 var Models = []any{
 	User{},
+	Role{},
+	Student{},
 }
 
 type User struct {
-	ID        int       `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
+	ID        uint      `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
 	Name      string    `gorm:"column:name;not null"`
 	Email     string    `gorm:"column:email;uniqueIndex;not null"`
 	Password  string    `gorm:"column:password;not null"`
@@ -116,4 +118,12 @@ type LetterAttachment struct {
 	Letter Letter
 
 	UploadedAt time.Time
+}
+
+func (u *User) RoleSlice() []string {
+	out := make([]string, 0, len(u.Roles))
+	for _, r := range u.Roles {
+		out = append(out, r.Code)
+	}
+	return out
 }

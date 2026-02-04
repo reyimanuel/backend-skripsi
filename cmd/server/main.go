@@ -15,8 +15,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/reyimanuel/letter-administration/cmd/database"
-	"github.com/reyimanuel/letter-administration/internal/infrastructure/config"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/config"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/database"
 	dbMigration "github.com/reyimanuel/letter-administration/internal/migration"
 	"github.com/reyimanuel/letter-administration/internal/server"
 )

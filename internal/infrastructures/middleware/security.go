@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
-	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
 )
 
@@ -20,7 +18,7 @@ func InitMiddleware(database *gorm.DB) {
 	db = database
 }
 
-func MiddlewareLogin(ctx *gin.Context) {
+func MiddlewareAuth(ctx *gin.Context) {
 	bearerToken := ctx.GetHeader("Authorization")
 
 	if bearerToken == "" {
@@ -54,49 +52,30 @@ func MiddlewareLogin(ctx *gin.Context) {
 		return
 	}
 
-	// Check if user still exists in DB
-	if db != nil {
-		var exists int64
-		if err := db.Model(&migration.User{}).Where("id = ?", user.ID).Count(&exists).Error; err != nil {
-			log.Printf("Middleware DB check error: %v", err)
-			// Fail safe: if DB error, maybe allow? Or deny? Deny is safer.
-			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Internal server error during auth check"})
-			return
-		}
-		if exists == 0 {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User account no longer exists"})
-			return
-		}
-	}
-
-	ctx.Set("user", user)
+	ctx.Set("auth", user)
 	ctx.Next()
 }
 
 func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		user, exists := ctx.Get("user")
+		auth, exists := ctx.Get("auth")
 		if !exists {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
 
-		claims, ok := user.(*token.UserAuthToken)
-		if !ok {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
-			return
+		claims := auth.(*token.UserAuthToken)
+
+		for _, role := range claims.Roles {
+			if slices.Contains(requiredRoles, role) {
+				ctx.Next()
+				return
+			}
 		}
 
-		log.Printf("role: %v", claims)
-
-		authorized := slices.Contains(requiredRoles, claims.Role)
-
-		if !authorized {
-			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Forbidden: insufficient role"})
-			return
-		}
-
-		ctx.Next()
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "Forbidden: insufficient role",
+		})
 	}
 }
 

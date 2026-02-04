@@ -2,11 +2,11 @@ package migration
 
 import (
 	"fmt"
+	"os/user"
 
 	"os"
 	"strings"
 
-	"github.com/reyimanuel/letter-administration/internal/api/user"
 	"gorm.io/gorm"
 )
 

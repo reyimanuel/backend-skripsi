@@ -40,3 +40,18 @@ func RandomString(length int) string {
 	}
 	return string(b)
 }
+
+func ToStringSlice(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		if s, ok := r.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}

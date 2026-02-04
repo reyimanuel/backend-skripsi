@@ -1,7 +1,10 @@
 package errs
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Response is a struct that represents the response structure for the API.
@@ -80,4 +83,16 @@ func InternalServerError(message string) MessageError {
 		ErrStatus:  http.StatusInternalServerError,
 		ErrError:   "Internal Server Error",
 	}
+}
+
+// handlerError is a helper function to handle errors in the controller.
+// It checks if the error is of type MessageError and responds with the appropriate status code and message.
+func HandlerError(ctx *gin.Context, err error) {
+	var messageErr MessageError
+	if errors.As(err, &messageErr) {
+		ctx.JSON(messageErr.Status(), messageErr)
+		return
+	}
+	_ = ctx.Error(err).SetType(gin.ErrorTypePrivate) // record internal error
+	ctx.JSON(http.StatusInternalServerError, InternalServerError("Internal Server Error"))
 }
