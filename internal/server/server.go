@@ -11,6 +11,7 @@ import (
 	config "github.com/reyimanuel/letter-administration/internal/infrastructures/config"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/database"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +25,8 @@ func Run() {
 	if cfg == nil {
 		log.Fatal("Configuration not loaded")
 	}
+
+	token.Load()
 
 	// Connect to database
 	db, _, err := database.ConnectDB()

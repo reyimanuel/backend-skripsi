@@ -5,8 +5,11 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 }
 
-type LoginResponse struct {
-	StatusCode   int    `json:"status_code"`
+type Response struct {
+	StatusCode int `json:"status_code"`
+	Data       any `json:"data,omitempty"`
+}
+type TokemResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 }

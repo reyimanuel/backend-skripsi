@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
@@ -17,13 +17,13 @@ func NewService(repo *repository) *Service {
 	return &Service{Repo: repo}
 }
 
-func (s *Service) Login(payload *LoginRequest) (*LoginResponse, error) {
+func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 	user, err := s.Repo.GetByEmail(payload.Email)
 	if err != nil {
 		return nil, errs.Unauthorized("Email atau Password Salah")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(payload.Password)); err != nil {
+	if !helpers.CheckPasswordHash(payload.Password, user.Password) {
 		return nil, errs.Unauthorized("Email atau Password Salah")
 	}
 
@@ -39,9 +39,11 @@ func (s *Service) Login(payload *LoginRequest) (*LoginResponse, error) {
 		return nil, errs.InternalServerError("Gagal membuat refresh token")
 	}
 
-	return &LoginResponse{
-		StatusCode:   http.StatusOK,
-		AccessToken:  access,
-		RefreshToken: refresh,
+	return &Response{
+		StatusCode: http.StatusOK,
+		Data: TokemResponse{
+			AccessToken:  access,
+			RefreshToken: refresh,
+		},
 	}, nil
 }
