@@ -32,3 +32,24 @@ func (r *repository) GetRoleByCode(tx *gorm.DB, code string) (*migration.Role, e
 	}
 	return &role, nil
 }
+
+func (r *repository) CreateLetter(tx *gorm.DB, letter *migration.Letter) error {
+	if err := tx.Create(letter).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *repository) CreateHistory(tx *gorm.DB, history *migration.LetterHistory) error {
+	if err := tx.Create(history).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *repository) CreateApproval(tx *gorm.DB, approval *migration.LetterApproval) error {
+	if err := tx.Create(approval).Error; err != nil {
+		return err
+	}
+	return nil
+}

@@ -1,6 +1,8 @@
 package letters
 
 import (
+	"log"
+
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/datatypes"
@@ -15,15 +17,17 @@ func NewService(repo *repository) *Service {
 	return &Service{Repo: repo}
 }
 
-func (s *Service) CreateLetter(userID uint, req CreateLetterRequest) (*migration.Letter, error) {
-	return s.Repo.WithTx(func(tx *gorm.DB) (*migration.Letter, error) {
+func (s *Service) Create(userID uint, req CreateLetterRequest) (*Response, error) {
+	var letter *migration.Letter
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 
 		student, err := s.Repo.GetStudentByUserID(tx, userID)
 		if err != nil {
-			return nil, errs.Forbidden("Hanya mahasiswa yang bisa mengajukan surat")
+			return errs.Forbidden("Hanya mahasiswa yang dapat mengajukan surat")
 		}
 
-		letter := migration.Letter{
+		letter = &migration.Letter{
 			StudentID:    student.ID,
 			LetterTypeID: req.LetterTypeID,
 			Subject:      req.Subject,
@@ -31,29 +35,38 @@ func (s *Service) CreateLetter(userID uint, req CreateLetterRequest) (*migration
 			Status:       "submitted",
 		}
 
-		if err := tx.Create(&letter).Error; err != nil {
-			return nil, errs.InternalServerError("Gagal membuat surat")
+		if err := s.Repo.CreateLetter(tx, letter); err != nil {
+			log.Printf("error membuat surat: %v", err)
+			return errs.InternalServerError("Gagal membuat surat")
 		}
 
-		// History
-		history := migration.LetterHistory{
-			LetterID: letter.ID,
-			ActorID:  userID,
-			Action:   "SUBMITTED",
-			Notes:    "Surat diajukan oleh mahasiswa",
+		if err := s.Repo.CreateHistory(tx, &migration.LetterHistory{LetterID: letter.ID, ActorID: userID, Action: "SUBMITTED"}); err != nil {
+			log.Printf("error membuat history surat: %v", err)
+			return errs.InternalServerError("Gagal membuat history surat")
 		}
-		tx.Create(&history)
 
-		// Approval awal → ADMIN
 		adminRole, _ := s.Repo.GetRoleByCode(tx, "ADMIN")
-
-		approval := migration.LetterApproval{
-			LetterID: letter.ID,
-			RoleID:   adminRole.ID,
-			Status:   "pending",
+		if err := s.Repo.CreateApproval(tx, &migration.LetterApproval{LetterID: letter.ID, RoleID: adminRole.ID, Status: "pending"}); err != nil {
+			log.Printf("error membuat approval surat: %v", err)
+			return errs.InternalServerError("Gagal membuat approval surat")
 		}
-		tx.Create(&approval)
 
-		return &letter, nil
+		return nil
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{
+		StatusCode: 200,
+		Message:    "Surat berhasil dibuat",
+		Data: Data{
+			ID:           letter.ID,
+			LetterTypeID: letter.LetterTypeID,
+			Subject:      letter.Subject,
+			Status:       letter.Status,
+			CreatedAt:    letter.CreatedAt,
+		},
+	}, nil
 }

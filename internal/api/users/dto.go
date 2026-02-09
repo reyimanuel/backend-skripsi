@@ -6,10 +6,11 @@ type LoginRequest struct {
 }
 
 type Response struct {
-	StatusCode int `json:"status_code"`
-	Data       any `json:"data,omitempty"`
+	StatusCode int    `json:"status_code"`
+	Message    string `json:"message"`
+	Data       any    `json:"data,omitempty"`
 }
-type TokemResponse struct {
+type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 }

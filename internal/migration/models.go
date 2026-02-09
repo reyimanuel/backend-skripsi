@@ -15,6 +15,7 @@ var Models = []any{
 	LetterApproval{},
 	LetterHistory{},
 	LetterAttachment{},
+	LetterTemplate{},
 }
 
 type User struct {
@@ -127,6 +128,22 @@ type LetterAttachment struct {
 	Letter Letter
 
 	UploadedAt time.Time
+}
+
+type LetterTemplate struct {
+	ID uint `gorm:"primaryKey"`
+
+	LetterTypeID uint `gorm:"uniqueIndex;not null"`
+
+	FilePath string `gorm:"size:255;not null"` // path .docx
+	FileType string `gorm:"size:20;not null"`  // docx
+
+	CreatedBy uint
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	LetterType LetterType
+	Creator    User
 }
 
 func (u *User) RoleSlice() []string {

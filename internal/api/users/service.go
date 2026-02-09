@@ -41,7 +41,8 @@ func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 
 	return &Response{
 		StatusCode: http.StatusOK,
-		Data: TokemResponse{
+		Message:    "Login Berhasil",
+		Data: TokenResponse{
 			AccessToken:  access,
 			RefreshToken: refresh,
 		},

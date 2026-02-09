@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -24,4 +25,15 @@ func RemoveOldFile(oldPath, newPath string) {
 			log.Printf("gagal menghapus file lama %s: %v", actualPath, err)
 		}
 	}
+}
+
+func ConvertToPDF(docxPath string) error {
+	cmd := exec.Command(
+		`C:\Program Files\LibreOffice\program\soffice.exe`,
+		"--headless",
+		"--convert-to", "pdf",
+		docxPath,
+		"--outdir", filepath.Dir(docxPath),
+	)
+	return cmd.Run()
 }
