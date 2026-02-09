@@ -1,11 +1,20 @@
 package migration
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 var Models = []any{
 	User{},
 	Role{},
 	Student{},
+	LetterType{},
+	Letter{},
+	LetterApproval{},
+	LetterHistory{},
+	LetterAttachment{},
 }
 
 type User struct {
@@ -55,8 +64,8 @@ type Letter struct {
 	StudentID    uint `gorm:"not null"`
 	LetterTypeID uint `gorm:"not null"`
 
-	Subject string `gorm:"size:150;not null"`
-	Content string `gorm:"type:text;not null"`
+	Subject string         `gorm:"size:150;not null"`
+	Payload datatypes.JSON `gorm:"type:jsonb;not null"`
 
 	Status string `gorm:"size:30;not null"`
 	// draft, submitted, verified, signed, rejected

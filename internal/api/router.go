@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/reyimanuel/letter-administration/internal/api/user"
+	user "github.com/reyimanuel/letter-administration/internal/api/users"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
