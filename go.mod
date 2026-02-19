@@ -33,6 +33,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
+	github.com/richardlehane/msoleps v1.0.3 // indirect
 	github.com/sendgrid/rest v2.6.9+incompatible // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
@@ -55,6 +56,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/joho/godotenv v1.5.1
 	github.com/sendgrid/sendgrid-go v3.16.1+incompatible
+	github.com/unidoc/unioffice v1.39.0
 	golang.org/x/text v0.33.0 // indirect
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.0

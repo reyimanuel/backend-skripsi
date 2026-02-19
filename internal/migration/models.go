@@ -9,6 +9,7 @@ import (
 var Models = []any{
 	User{},
 	Role{},
+	UserRole{},
 	Student{},
 	LetterType{},
 	Letter{},
@@ -30,6 +31,27 @@ type User struct {
 	Roles   []Role   `gorm:"many2many:user_roles;"`
 	Student *Student `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
+
+type Official struct {
+	ID        uint   `gorm:"primaryKey"`
+	UserID    uint   `gorm:"not null"`
+	NIP       string `gorm:"size:50"`
+	Pangkat   string `gorm:"size:100"`
+	Jabatan   string `gorm:"size:100"` // Dekan / Wakil Dekan
+	Signature string `gorm:"size:255"` // path tanda tangan
+	IsActive  bool   `gorm:"default:true"`
+
+	User User `gorm:"constraint:OnDelete:CASCADE;"`
+}
+
+type UserRole struct {
+	UserID uint `gorm:"primaryKey"`
+	RoleID uint `gorm:"primaryKey"`
+
+	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE;"`
+	Role Role `gorm:"foreignKey:RoleID;constraint:OnDelete:CASCADE;"`
+}
+
 type Role struct {
 	ID   uint   `gorm:"primaryKey"`
 	Code string `gorm:"size:50;uniqueIndex;not null"`
@@ -39,7 +61,7 @@ type Role struct {
 type Student struct {
 	ID           uint   `gorm:"primaryKey"`
 	UserID       uint   `gorm:"uniqueIndex;not null"`
-	NPM          string `gorm:"size:20;uniqueIndex;not null"`
+	NIM          string `gorm:"size:20;uniqueIndex;not null"`
 	ProgramStudi string `gorm:"size:100;not null"`
 	Angkatan     int
 
@@ -70,6 +92,12 @@ type Letter struct {
 
 	Status string `gorm:"size:30;not null"`
 	// draft, submitted, verified, signed, rejected
+
+	SignedByID *uint
+	SignedBy   *Official `gorm:"foreignKey:SignedByID"`
+	SignedAt   *time.Time
+
+	FilePath string `gorm:"size:255"`
 
 	LetterNumber *string `gorm:"size:100"`
 
@@ -135,15 +163,17 @@ type LetterTemplate struct {
 
 	LetterTypeID uint `gorm:"uniqueIndex;not null"`
 
-	FilePath string `gorm:"size:255;not null"` // path .docx
-	FileType string `gorm:"size:20;not null"`  // docx
+	FilePath string `gorm:"size:255;not null"`
+	FileType string `gorm:"size:20;not null"`
 
-	CreatedBy uint
+	CreatedBy uint `gorm:"not null"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	LetterType LetterType
-	Creator    User
+	LetterType LetterType `gorm:"foreignKey:LetterTypeID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	Creator User `gorm:"foreignKey:CreatedBy;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 func (u *User) RoleSlice() []string {

@@ -1,57 +1,56 @@
 package letters
 
 import (
-	"log"
+	"fmt"
+	"mime/multipart"
+	"net/http"
+	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/migration"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	Repo *repository
+	Repo *Repository
 }
 
-func NewService(repo *repository) *Service {
+func NewService(repo *Repository) *Service {
 	return &Service{Repo: repo}
 }
 
-func (s *Service) Create(userID uint, req CreateLetterRequest) (*Response, error) {
-	var letter *migration.Letter
+func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipart.FileHeader) (*Response, error) {
+
+	if !strings.HasSuffix(file.Filename, ".docx") {
+		return nil, errs.BadRequest("Hanya file .docx yang diperbolehkan")
+	}
+
+	path := fmt.Sprintf(
+		"storage/templates/%d_%s",
+		letterTypeID,
+		file.Filename,
+	)
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 
-		student, err := s.Repo.GetStudentByUserID(tx, userID)
-		if err != nil {
-			return errs.Forbidden("Hanya mahasiswa yang dapat mengajukan surat")
+		// pastikan letter type ada
+		if _, err := s.Repo.GetLetterTypeByID(tx, letterTypeID); err != nil {
+			return errs.NotFound("Jenis surat tidak ditemukan")
 		}
 
-		letter = &migration.Letter{
-			StudentID:    student.ID,
-			LetterTypeID: req.LetterTypeID,
-			Subject:      req.Subject,
-			Payload:      datatypes.JSON(req.Payload),
-			Status:       "submitted",
+		// simpan file
+		if err := helpers.SaveUploadedFile(file, path); err != nil {
+			return err
 		}
 
-		if err := s.Repo.CreateLetter(tx, letter); err != nil {
-			log.Printf("error membuat surat: %v", err)
-			return errs.InternalServerError("Gagal membuat surat")
-		}
-
-		if err := s.Repo.CreateHistory(tx, &migration.LetterHistory{LetterID: letter.ID, ActorID: userID, Action: "SUBMITTED"}); err != nil {
-			log.Printf("error membuat history surat: %v", err)
-			return errs.InternalServerError("Gagal membuat history surat")
-		}
-
-		adminRole, _ := s.Repo.GetRoleByCode(tx, "ADMIN")
-		if err := s.Repo.CreateApproval(tx, &migration.LetterApproval{LetterID: letter.ID, RoleID: adminRole.ID, Status: "pending"}); err != nil {
-			log.Printf("error membuat approval surat: %v", err)
-			return errs.InternalServerError("Gagal membuat approval surat")
-		}
-
-		return nil
+		// upsert template
+		return s.Repo.UpsertTemplate(tx, &migration.LetterTemplate{
+			LetterTypeID: letterTypeID,
+			FilePath:     path,
+			FileType:     "docx",
+			CreatedBy:    adminID,
+		})
 	})
 
 	if err != nil {
@@ -59,14 +58,7 @@ func (s *Service) Create(userID uint, req CreateLetterRequest) (*Response, error
 	}
 
 	return &Response{
-		StatusCode: 200,
-		Message:    "Surat berhasil dibuat",
-		Data: Data{
-			ID:           letter.ID,
-			LetterTypeID: letter.LetterTypeID,
-			Subject:      letter.Subject,
-			Status:       letter.Status,
-			CreatedAt:    letter.CreatedAt,
-		},
+		StatusCode: http.StatusOK,
+		Message:    "Template surat berhasil diupload",
 	}, nil
 }

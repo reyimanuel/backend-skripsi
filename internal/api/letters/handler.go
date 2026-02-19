@@ -2,6 +2,7 @@ package letters
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
@@ -15,21 +16,22 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{Service: service}
 }
 
-func (h *Handler) Create(ctx *gin.Context) {
-	userIDAny, exists := ctx.Get("user_id")
-	if !exists {
-		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
-		return
-	}
-	userID := userIDAny.(uint)
+func (h *Handler) UploadTemplate(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
 
-	var req CreateLetterRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+	letterTypeID, err := strconv.ParseUint(ctx.PostForm("letter_type_id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("letter_type_id tidak valid"))
 		return
 	}
 
-	response, err := h.Service.Create(userID, req)
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("file wajib diupload"))
+		return
+	}
+
+	response, err := h.Service.UploadTemplate(userID, uint(letterTypeID), file)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

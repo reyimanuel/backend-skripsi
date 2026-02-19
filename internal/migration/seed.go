@@ -89,7 +89,7 @@ func Seed(db *gorm.DB, force bool) error {
 
 		student := Student{
 			UserID:       mahasiswa.ID,
-			NPM:          "210123456",
+			NIM:          "210123456",
 			ProgramStudi: "Teknik Informatika",
 			Angkatan:     2021,
 			CreatedAt:    time.Now(),
