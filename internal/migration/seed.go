@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"gorm.io/gorm"
@@ -17,10 +16,18 @@ func Seed(db *gorm.DB, force bool) error {
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
+
 		if err := tx.Exec(`
 			TRUNCATE TABLE 
-				user_roles,
+				letter_attachments,
+				letter_histories,
+				letter_approvals,
+				letters,
+				letter_templates,
+				letter_types,
+				officials,
 				students,
+				user_roles,
 				users,
 				roles
 			RESTART IDENTITY CASCADE
@@ -34,11 +41,12 @@ func Seed(db *gorm.DB, force bool) error {
 			{Code: "WAKIL_DEKAN", Name: "Wakil Dekan"},
 			{Code: "DEKAN", Name: "Dekan"},
 		}
+
 		if err := tx.Create(&roles).Error; err != nil {
 			return err
 		}
 
-		roleMap := map[string]Role{}
+		roleMap := make(map[string]Role)
 		for _, r := range roles {
 			roleMap[r.Code] = r
 		}
@@ -55,15 +63,15 @@ func Seed(db *gorm.DB, force bool) error {
 			Roles:    []Role{roleMap["ADMIN"]},
 		}
 
-		dekan := User{
-			Name:     "Dekan",
+		dekanUser := User{
+			Name:     "Prof. Dr. Dekan",
 			Email:    "dekan@kampus.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["DEKAN"]},
 		}
 
-		wakilDekan := User{
-			Name:     "Wakil Dekan",
+		wakilUser := User{
+			Name:     "Dr. Wakil Dekan",
 			Email:    "wakildekan@kampus.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["WAKIL_DEKAN"]},
@@ -71,17 +79,12 @@ func Seed(db *gorm.DB, force bool) error {
 
 		mahasiswa := User{
 			Name:     "Mahasiswa Test",
-			Email:    "miraclesumajow026@student.unsrat.ac.id",
+			Email:    "mahasiswa@test.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["MAHASISWA"]},
 		}
 
-		users := []*User{
-			&admin,
-			&dekan,
-			&wakilDekan,
-			&mahasiswa,
-		}
+		users := []*User{&admin, &dekanUser, &wakilUser, &mahasiswa}
 
 		if err := tx.Create(&users).Error; err != nil {
 			return err
@@ -92,11 +95,52 @@ func Seed(db *gorm.DB, force bool) error {
 			NIM:          "210123456",
 			ProgramStudi: "Teknik Informatika",
 			Angkatan:     2021,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
 		}
 
 		if err := tx.Create(&student).Error; err != nil {
+			return err
+		}
+
+		dekanOfficial := Official{
+			UserID:    dekanUser.ID,
+			NIP:       "196501011990031001",
+			Pangkat:   "Pembina Utama",
+			Jabatan:   "dekan",
+			Signature: "storage/signatures/dekan.png",
+			IsActive:  true,
+		}
+
+		wakilOfficial := Official{
+			UserID:    wakilUser.ID,
+			NIP:       "197001011995031002",
+			Pangkat:   "Pembina",
+			Jabatan:   "wakil_dekan",
+			Signature: "storage/signatures/wakil.png",
+			IsActive:  true,
+		}
+
+		if err := tx.Create(&dekanOfficial).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Create(&wakilOfficial).Error; err != nil {
+			return err
+		}
+
+		letterTypes := []LetterType{
+			{
+				Code:        "SURAT_AKTIF",
+				Name:        "Surat Keterangan Aktif Kuliah",
+				Description: "Digunakan untuk keperluan administrasi mahasiswa",
+			},
+			{
+				Code:        "SURAT_PENELITIAN",
+				Name:        "Surat Izin Penelitian",
+				Description: "Digunakan untuk keperluan penelitian",
+			},
+		}
+
+		if err := tx.Create(&letterTypes).Error; err != nil {
 			return err
 		}
 

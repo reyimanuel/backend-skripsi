@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,18 +37,15 @@ func SaveUploadedFile(file *multipart.FileHeader, path string) error {
 	return err
 }
 
-func GenerateUniqueFileName(originalPath string) string {
-	ext := filepath.Ext(originalPath)
-	name := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-	return name
+func GenerateUniqueFileName(originalName string) string {
+	ext := strings.ToLower(filepath.Ext(originalName))
+	return fmt.Sprintf("%s%s", uuid.New().String(), ext)
 }
 
 func RemoveOldFile(oldPath, newPath string) {
 	if oldPath != "" && oldPath != newPath {
-		actualPath := filepath.Join(".", strings.ReplaceAll(oldPath, "/", string(os.PathSeparator)))
-
-		if err := os.Remove(actualPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file lama %s: %v", actualPath, err)
+		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file lama %s: %v", oldPath, err)
 		}
 	}
 }
@@ -61,6 +59,21 @@ func ConvertToPDF(docxPath string) error {
 		"--outdir", filepath.Dir(docxPath),
 	)
 	return cmd.Run()
+}
+
+func DetectMimeType(file *multipart.FileHeader) (string, error) {
+	src, err := file.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	buffer := make([]byte, 512)
+	if _, err := src.Read(buffer); err != nil && err != io.EOF {
+		return "", err
+	}
+
+	return http.DetectContentType(buffer), nil
 }
 
 func FillTemplate(srcPath, dstPath string, data map[string]string) error {

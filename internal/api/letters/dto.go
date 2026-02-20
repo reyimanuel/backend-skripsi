@@ -1,14 +1,12 @@
 package letters
 
 import (
-	"encoding/json"
+	"mime/multipart"
 	"time"
 )
 
-type CreateLetterRequest struct {
-	LetterTypeID uint            `json:"letter_type_id" binding:"required"`
-	Subject      string          `json:"subject" binding:"required"`
-	Payload      json.RawMessage `json:"payload" binding:"required"`
+type UploadTemplateRequest struct {
+	File *multipart.FileHeader `form:"file" binding:"required"`
 }
 
 type Data struct {

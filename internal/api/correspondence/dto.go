@@ -24,3 +24,9 @@ type Response struct {
 	Message    string `json:"message"`
 	Data       any    `json:"data,omitempty"`
 }
+
+type ApproveLetterRequest struct {
+	Action       string `json:"action" binding:"required,oneof=approve reject forward"`
+	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan
+	Notes        string `json:"notes"`
+}

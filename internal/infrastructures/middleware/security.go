@@ -18,18 +18,29 @@ func InitMiddleware(database *gorm.DB) {
 	db = database
 }
 
+type Response struct {
+	StatusCode int    `json:"status_code"`
+	Message    string `json:"message"`
+	Data       any    `json:"data,omitempty"`
+}
+
 func MiddlewareAuth(ctx *gin.Context) {
 	bearerToken := ctx.GetHeader("Authorization")
-
 	if bearerToken == "" {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
+			StatusCode: http.StatusUnauthorized,
+			Message:    "Authorization header is required",
+		})
 		ctx.Abort()
 		return
 	}
 
 	tokenStr, errMsg := parseAuthHeader(bearerToken)
 	if errMsg != "" {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": errMsg})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
+			StatusCode: http.StatusUnauthorized,
+			Message:    errMsg,
+		})
 		ctx.Abort()
 		return
 	}
@@ -48,7 +59,11 @@ func MiddlewareAuth(ctx *gin.Context) {
 			errMsg = "Invalid or malformed token"
 		}
 
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": errMsg})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
+			StatusCode: http.StatusUnauthorized,
+			Message:    errMsg,
+		})
+		ctx.Abort()
 		return
 	}
 
@@ -60,7 +75,10 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		auth, exists := ctx.Get("auth")
 		if !exists {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
+				StatusCode: http.StatusUnauthorized,
+				Message:    "Unauthorized",
+			})
 			return
 		}
 
@@ -73,8 +91,9 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 			}
 		}
 
-		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error": "Forbidden: insufficient role",
+		ctx.AbortWithStatusJSON(http.StatusForbidden, Response{
+			StatusCode: http.StatusForbidden,
+			Message:    "Forbidden: insufficient permissions",
 		})
 	}
 }
@@ -101,4 +120,17 @@ func parseAuthHeader(header string) (string, string) {
 	}
 
 	return "", "Invalid token format"
+}
+
+func GetUserID(c *gin.Context) (uint, error) {
+	auth, exists := c.Get("auth")
+	if !exists {
+		return 0, errors.New("user not authenticated")
+	}
+
+	claims, ok := auth.(*token.UserAuthToken)
+	if !ok {
+		return 0, errors.New("failed to extract user claims")
+	}
+	return claims.UserID, nil
 }

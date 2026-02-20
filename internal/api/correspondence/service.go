@@ -129,73 +129,86 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 	}, nil
 }
 
-func (s *Service) ApproveLetter(letterID uint, role string) (*Response, error) {
+func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
 		if err != nil {
 			return errs.NotFound("Surat tidak ditemukan")
 		}
 
-		if letter.Status != "submitted" {
+		if letter.Status != "submitted" && letter.Status != "forwarded" {
 			return errs.BadRequest("Surat tidak dalam status yang dapat disetujui")
 		}
 
-		// 1. Ambil pejabat aktif
-		official, err := s.UsersRepo.GetActiveOfficialByRole(tx, role)
-		if err != nil {
-			return errs.NotFound("Data administratif tidak ditemukan")
+		switch req.Action {
+
+		case "reject":
+			letter.Status = "rejected"
+
+		case "forward":
+
+			if req.SignedByRole == "" {
+				return errs.BadRequest("Penandatangan wajib dipilih")
+			}
+
+			official, err := s.UsersRepo.GetActiveOfficialByRole(tx, req.SignedByRole)
+			if err != nil {
+				return errs.NotFound("Pejabat tidak ditemukan")
+			}
+
+			letter.Status = "forwarded"
+			letter.SignedByID = &official.ID
+
+		case "approve":
+
+			if req.SignedByRole == "" {
+				return errs.BadRequest("Penandatangan wajib dipilih")
+			}
+
+			official, err := s.UsersRepo.GetActiveOfficialByRole(tx, req.SignedByRole)
+			if err != nil {
+				return errs.NotFound("Pejabat tidak ditemukan")
+			}
+
+			sequence, err := s.Repo.CountApprovedThisYear(tx)
+			if err != nil {
+				return errs.InternalServerError("Gagal generate nomor surat")
+			}
+
+			nomorSurat := helpers.GenerateLetterNumber(sequence + 1)
+
+			student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
+			if err != nil {
+				return errs.NotFound("Data mahasiswa tidak ditemukan")
+			}
+
+			data := map[string]string{
+				"Mahasiswa":  student.User.Name,
+				"NIM":        student.NIM,
+				"Prodi":      student.ProgramStudi,
+				"NomorSurat": nomorSurat,
+				"NamaTtd":    official.User.Name,
+				"nip":        official.NIP,
+				"pangkat":    official.Pangkat,
+				"jabatan":    official.Jabatan,
+			}
+
+			output := fmt.Sprintf("storage/generated/final_%d.docx", letter.ID)
+
+			if err := helpers.FillTemplate(letter.FilePath, output, data); err != nil {
+				return errs.InternalServerError("Gagal mengisi template")
+			}
+
+			now := time.Now()
+
+			letter.Status = "approved"
+			letter.FilePath = output
+			letter.LetterNumber = &nomorSurat
+			letter.SignedByID = &official.ID
+			letter.SignedAt = &now
 		}
 
-		// 2. Generate nomor surat
-		sequence, err := s.Repo.CountApprovedThisYear(tx)
-		if err != nil {
-			log.Printf("error counting approved letters this year: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan")
-		}
-		nomorSurat := helpers.GenerateLetterNumber(sequence + 1)
-
-		// 3. Ambil student
-		student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
-		if err != nil {
-			return errs.NotFound("Data mahasiswa tidak ditemukan")
-		}
-
-		// 4. Build placeholder final
-		data := map[string]string{
-			"Mahasiswa":  student.User.Name,
-			"NIM":        student.NIM,
-			"Prodi":      student.ProgramStudi,
-			"NomorSurat": nomorSurat,
-
-			"dekan":   official.User.Name,
-			"nip":     official.NIP,
-			"pangkat": official.Pangkat,
-			"jabatan": official.Jabatan,
-		}
-
-		output := fmt.Sprintf("storage/generated/final_%d.docx", letter.ID)
-
-		err = helpers.FillTemplate(letter.FilePath, output, data)
-		if err != nil {
-			log.Printf("error filling letter template: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan saat mengisi template surat")
-		}
-
-		now := time.Now()
-
-		// 5. Update DB
-		letter.Status = "approved"
-		letter.FilePath = output
-		letter.LetterNumber = &nomorSurat
-		letter.SignedByID = &official.ID
-		letter.SignedAt = &now
-
-		if err := tx.Save(letter).Error; err != nil {
-			log.Printf("error saving approved letter: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan saat menyimpan surat")
-		}
-
-		return nil
+		return tx.Save(letter).Error
 	})
 
 	if err != nil {

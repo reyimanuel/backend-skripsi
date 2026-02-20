@@ -1,10 +1,12 @@
 package letters
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 )
 
@@ -17,21 +19,27 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) UploadTemplate(ctx *gin.Context) {
-	userID := ctx.GetUint("user_id")
-
-	letterTypeID, err := strconv.ParseUint(ctx.PostForm("letter_type_id"), 10, 64)
+	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("letter_type_id tidak valid"))
+		errs.HandlerError(ctx, errs.Unauthorized("pengguna tidak terautentikasi"))
 		return
 	}
 
-	file, err := ctx.FormFile("file")
-	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("file wajib diupload"))
+	var req UploadTemplateRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		fmt.Println("Bind error:", err)
+		errs.HandlerError(ctx, errs.BadRequest("permintaan tidak valid"))
 		return
 	}
 
-	response, err := h.Service.UploadTemplate(userID, uint(letterTypeID), file)
+	letterTypeIDParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(letterTypeIDParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("tipe surat tidak valid"))
+		return
+	}
+
+	response, err := h.Service.UploadTemplate(userID, uint(letterTypeID), req.File)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

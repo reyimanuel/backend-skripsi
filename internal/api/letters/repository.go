@@ -40,3 +40,25 @@ func (r *Repository) GetLetterByID(tx *gorm.DB, letterID uint) (*migration.Lette
 	}
 	return &letter, nil
 }
+
+func (r *Repository) GetTemplateByLetterTypeID(
+	tx *gorm.DB,
+	letterTypeID uint,
+) (*migration.LetterTemplate, error) {
+
+	var template migration.LetterTemplate
+
+	err := tx.
+		Where("letter_type_id = ?", letterTypeID).
+		First(&template).
+		Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &template, nil
+}

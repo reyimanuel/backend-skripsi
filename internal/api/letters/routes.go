@@ -10,5 +10,5 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	service := NewService(repo)
 	handler := NewHandler(service)
 
-	r.POST("/", handler.UploadTemplate)
+	r.POST("/upload/:id", handler.UploadTemplate)
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
-	"strings"
+	"path/filepath"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
@@ -21,33 +21,47 @@ func NewService(repo *Repository) *Service {
 }
 
 func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipart.FileHeader) (*Response, error) {
-
-	if !strings.HasSuffix(file.Filename, ".docx") {
-		return nil, errs.BadRequest("Hanya file .docx yang diperbolehkan")
+	if filepath.Ext(file.Filename) != ".docx" {
+		return nil, errs.BadRequest("hanya file .docx yang diperbolehkan")
 	}
 
-	path := fmt.Sprintf(
-		"storage/templates/%d_%s",
-		letterTypeID,
-		file.Filename,
-	)
+	mime, err := helpers.DetectMimeType(file)
+	if err != nil {
+		return nil, errs.InternalServerError("gagal membaca file")
+	}
 
-	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+	allowedMimes := map[string]bool{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		"application/zip": true,
+	}
+	if !allowedMimes[mime] {
+		fmt.Printf("mime type tidak valid: %s\n", mime)
+		return nil, errs.BadRequest("file docx tidak valid")
+	}
 
-		// pastikan letter type ada
+	newFileName := helpers.GenerateUniqueFileName(file.Filename)
+	newPath := filepath.Join("public", "letter-template", newFileName)
+
+	var oldPath string
+
+	err = s.Repo.WithTx(func(tx *gorm.DB) error {
+
 		if _, err := s.Repo.GetLetterTypeByID(tx, letterTypeID); err != nil {
 			return errs.NotFound("Jenis surat tidak ditemukan")
 		}
 
-		// simpan file
-		if err := helpers.SaveUploadedFile(file, path); err != nil {
+		existing, _ := s.Repo.GetTemplateByLetterTypeID(tx, letterTypeID)
+		if existing != nil {
+			oldPath = existing.FilePath
+		}
+
+		if err := helpers.SaveUploadedFile(file, newPath); err != nil {
 			return err
 		}
 
-		// upsert template
 		return s.Repo.UpsertTemplate(tx, &migration.LetterTemplate{
 			LetterTypeID: letterTypeID,
-			FilePath:     path,
+			FilePath:     newPath,
 			FileType:     "docx",
 			CreatedBy:    adminID,
 		})
@@ -57,8 +71,10 @@ func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipar
 		return nil, err
 	}
 
+	helpers.RemoveOldFile(oldPath, newPath)
+
 	return &Response{
-		StatusCode: http.StatusOK,
+		StatusCode: http.StatusCreated,
 		Message:    "Template surat berhasil diupload",
 	}, nil
 }
