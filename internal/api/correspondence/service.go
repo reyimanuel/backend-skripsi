@@ -49,6 +49,7 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			"angkatan":      fmt.Sprintf("%d/%d", student.Angkatan, student.Angkatan+1),
 			"tanggal":       time.Now().Format("19 Januari 2005"),
 			"tahun_ajaran":  helpers.GetCurrentAcademicYear(),
+			"tujuan_surat":  fmt.Sprintf("%v", req.Payload["tujuan_surat"]),
 		}
 
 		for k, v := range req.Payload {
@@ -59,16 +60,16 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 		outputPDF := fmt.Sprintf("storage/generated/letter_%d.pdf", time.Now().Unix())
 
 		if err := helpers.FillTemplate(template.FilePath, outputDocx, data); err != nil {
-			return err
+			return fmt.Errorf("error filling letter template %v", err)
 		}
 
 		if err := helpers.ConvertToPDF(outputDocx); err != nil {
-			return err
+			return fmt.Errorf("error converting letter to PDF %v", err)
 		}
 
 		letter.FilePath = outputPDF
 		if err := tx.Save(letter).Error; err != nil {
-			return err
+			return fmt.Errorf("error saving letter %v", err)
 		}
 
 		payloadBytes, err := json.Marshal(req.Payload)

@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
 	"log"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/unidoc/unioffice/document"
 )
 
 func SaveUploadedFile(file *multipart.FileHeader, path string) error {
@@ -33,8 +33,11 @@ func SaveUploadedFile(file *multipart.FileHeader, path string) error {
 	}
 	defer dst.Close()
 
-	_, err = io.Copy(dst, src)
-	return err
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+
+	return dst.Sync()
 }
 
 func GenerateUniqueFileName(originalName string) string {
@@ -50,6 +53,44 @@ func RemoveOldFile(oldPath, newPath string) {
 	}
 }
 
+func ConvertDocxToPDF(inputPath string) (string, error) {
+	absInput, err := filepath.Abs(inputPath)
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := os.Stat(absInput); err != nil {
+		return "", fmt.Errorf("file tidak ditemukan: %v", err)
+	}
+
+	outputDir := filepath.Dir(absInput)
+
+	cmd := exec.Command(
+		`C:\Program Files\LibreOffice\program\soffice.com`,
+		"--headless",
+		"--nologo",
+		"--nolockcheck",
+		"--nodefault",
+		"--norestore",
+		"--convert-to", "pdf:writer_pdf_Export",
+		absInput,
+		"--outdir", outputDir,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("convert failed: %v | %s", err, string(output))
+	}
+
+	pdfPath := strings.TrimSuffix(absInput, filepath.Ext(absInput)) + ".pdf"
+
+	if _, err := os.Stat(pdfPath); err != nil {
+		return "", fmt.Errorf("pdf tidak terbentuk")
+	}
+
+	return pdfPath, nil
+}
+
 func ConvertToPDF(docxPath string) error {
 	cmd := exec.Command(
 		`C:\Program Files\LibreOffice\program\soffice.exe`,
@@ -61,44 +102,76 @@ func ConvertToPDF(docxPath string) error {
 	return cmd.Run()
 }
 
-func DetectMimeType(file *multipart.FileHeader) (string, error) {
-	src, err := file.Open()
+func DetectMimeTypeFromPath(path string) (string, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
+	defer file.Close()
 
 	buffer := make([]byte, 512)
-	if _, err := src.Read(buffer); err != nil && err != io.EOF {
+	_, err = file.Read(buffer)
+	if err != nil && err != io.EOF {
 		return "", err
 	}
 
 	return http.DetectContentType(buffer), nil
 }
 
+// FillTemplate copies a .docx file from srcPath to dstPath while replacing
+// {{key}} placeholders with the corresponding values from data.
+// It works by treating the docx as a ZIP archive and doing string replacement
+// directly on word/document.xml — no external license required.
 func FillTemplate(srcPath, dstPath string, data map[string]string) error {
-	doc, err := document.Open(srcPath)
+	r, err := zip.OpenReader(srcPath)
 	if err != nil {
+		return fmt.Errorf("open template: %w", err)
+	}
+	defer r.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 		return err
 	}
 
-	for _, para := range doc.Paragraphs() {
-		for _, run := range para.Runs() {
-			text := run.Text()
+	out, err := os.Create(dstPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
 
+	w := zip.NewWriter(out)
+	defer w.Close()
+
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		content, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return err
+		}
+
+		if f.Name == "word/document.xml" {
+			s := string(content)
 			for key, val := range data {
-				placeholder := "{{" + key + "}}"
-				if strings.Contains(text, placeholder) {
-					text = strings.ReplaceAll(text, placeholder, val)
-				}
+				s = strings.ReplaceAll(s, "{{{"+key+"}}}", val)
+				s = strings.ReplaceAll(s, "{{"+key+"}}", val)
 			}
+			content = []byte(s)
+		}
 
-			run.ClearContent()
-			run.AddText(text)
+		fw, err := w.CreateHeader(&f.FileHeader)
+		if err != nil {
+			return err
+		}
+		if _, err := fw.Write(content); err != nil {
+			return err
 		}
 	}
 
-	return doc.SaveToFile(dstPath)
+	return nil
 }
 
 func GetCurrentAcademicYear() string {

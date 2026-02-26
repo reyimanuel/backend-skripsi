@@ -17,7 +17,7 @@ func NewRepository(db *gorm.DB) *Repository {
 
 func (r *Repository) GetByEmail(email string) (*migration.User, error) {
 	var user migration.User
-	if err := r.DB.Where("email = ?", email).First(&user).Error; err != nil {
+	if err := r.DB.Preload("Roles").Where("email = ?", email).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil

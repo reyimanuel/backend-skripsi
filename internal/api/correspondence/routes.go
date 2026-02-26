@@ -13,6 +13,6 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	service := NewService(repo, letters.NewRepository(db), user.NewRepository(db))
 	handler := NewHandler(service)
 
-	r.POST("/", middleware.MiddlewareRole("STUDENT"), handler.CreateSubmitLetter)
-	r.PATCH("/:id/approve", middleware.MiddlewareRole("ADMIN"), handler.ApproveLetter)
+	r.POST("/submit", middleware.MiddlewareRole("MAHASISWA"), handler.CreateSubmitLetter)
+	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN"), handler.ApproveLetter)
 }

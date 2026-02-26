@@ -8,6 +8,26 @@ import (
 
 func RunMigration(db *gorm.DB, force bool) error {
 	fmt.Println("Running migrations...")
+
+	// Ensure core tables (users, roles) exist first so we can clean up
+	// any orphaned rows in dependent tables (e.g. officials) before
+	// AutoMigrate adds foreign key constraints that would fail.
+	if err := db.AutoMigrate(&Models[0], &Models[1]); err != nil {
+		// fallback: try explicit types for clarity
+		if err2 := db.AutoMigrate((*User)(nil), (*Role)(nil)); err2 != nil {
+			return fmt.Errorf("gagal migrasi (pre-migrate users/roles): %w; fallback: %v", err, err2)
+		}
+	}
+
+	// If the officials table already exists from a previous run, remove
+	// any rows that reference non-existent users to avoid FK constraint
+	// creation failures when AutoMigrate runs for the full schema.
+	if db.Migrator().HasTable(&Official{}) {
+		if err := db.Exec(`DELETE FROM officials WHERE user_id NOT IN (SELECT id FROM users)`).Error; err != nil {
+			return fmt.Errorf("failed cleaning orphan officials: %w", err)
+		}
+	}
+
 	if err := db.AutoMigrate(Models...); err != nil {
 		return fmt.Errorf("gagal migrasi: %w", err)
 	}

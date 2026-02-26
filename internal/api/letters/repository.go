@@ -1,6 +1,8 @@
 package letters
 
 import (
+	"errors"
+
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
 )
@@ -18,11 +20,24 @@ func (r *Repository) WithTx(fn func(tx *gorm.DB) error) error {
 }
 
 func (r *Repository) UpsertTemplate(tx *gorm.DB, t *migration.LetterTemplate) error {
-	return tx.
-		Where("letter_type_id = ?", t.LetterTypeID).
-		Assign(t).
-		FirstOrCreate(t).
-		Error
+	var existing migration.LetterTemplate
+
+	err := tx.Where("letter_type_id = ?", t.LetterTypeID).
+		First(&existing).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(t).Error
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return tx.Model(&existing).Updates(map[string]interface{}{
+		"file_path":  t.FilePath,
+		"file_type":  t.FileType,
+		"created_by": t.CreatedBy,
+	}).Error
 }
 
 func (r *Repository) GetLetterTypeByID(tx *gorm.DB, id uint) (*migration.LetterType, error) {

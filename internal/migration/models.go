@@ -8,6 +8,7 @@ import (
 
 var Models = []any{
 	User{},
+	Official{},
 	Role{},
 	UserRole{},
 	Student{},

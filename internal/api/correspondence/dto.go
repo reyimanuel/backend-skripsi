@@ -5,9 +5,9 @@ import (
 )
 
 type SubmitLetterRequest struct {
-	LetterTypeID uint                   `json:"letter_type_id" binding:"required"`
-	Subject      string                 `json:"subject" binding:"required"`
-	Payload      map[string]interface{} `json:"payload" binding:"required"`
+	LetterTypeID uint           `json:"letter_type_id" binding:"required"`
+	Subject      string         `json:"subject" binding:"required"`
+	Payload      map[string]any `json:"payload" binding:"required"`
 }
 
 type Data struct {

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -91,6 +92,7 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 			}
 		}
 
+		fmt.Printf("User %d with roles %v attempted to access a resource requiring roles %v\n", claims.UserID, claims.Roles, requiredRoles)
 		ctx.AbortWithStatusJSON(http.StatusForbidden, Response{
 			StatusCode: http.StatusForbidden,
 			Message:    "Forbidden: insufficient permissions",

@@ -3,7 +3,9 @@ package letters
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
@@ -25,13 +27,6 @@ func (h *Handler) UploadTemplate(ctx *gin.Context) {
 		return
 	}
 
-	var req UploadTemplateRequest
-	if err := ctx.ShouldBind(&req); err != nil {
-		fmt.Println("Bind error:", err)
-		errs.HandlerError(ctx, errs.BadRequest("permintaan tidak valid"))
-		return
-	}
-
 	letterTypeIDParam := ctx.Param("id")
 	letterTypeID, err := strconv.ParseUint(letterTypeIDParam, 10, 64)
 	if err != nil {
@@ -39,11 +34,45 @@ func (h *Handler) UploadTemplate(ctx *gin.Context) {
 		return
 	}
 
-	response, err := h.Service.UploadTemplate(userID, uint(letterTypeID), req.File)
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("file tidak ditemukan"))
+		return
+	}
+	fmt.Printf("Received file: %s (%d bytes)\n", file.Filename, file.Size)
+
+	response, err := h.Service.UploadTemplate(userID, uint(letterTypeID), file)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) PreviewTemplate(ctx *gin.Context) {
+	idParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("id tidak valid"))
+		return
+	}
+
+	pdfPath, err := h.Service.PreviewTemplate(uint(letterTypeID))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	file, err := os.Open(pdfPath)
+	if err != nil {
+		errs.HandlerError(ctx, errs.InternalServerError("Gagal membuka file"))
+		return
+	}
+	defer file.Close()
+
+	ctx.Header("Content-Type", "application/pdf")
+	ctx.Header("Content-Disposition", "inline; filename=preview.pdf")
+
+	http.ServeContent(ctx.Writer, ctx.Request, "preview.pdf", time.Now(), file)
 }

@@ -11,4 +11,5 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.POST("/upload/:id", handler.UploadTemplate)
+	r.GET("/preview/:id", handler.PreviewTemplate)
 }
