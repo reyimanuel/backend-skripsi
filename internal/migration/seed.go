@@ -105,7 +105,7 @@ func Seed(db *gorm.DB, force bool) error {
 			UserID:    dekanUser.ID,
 			NIP:       "196501011990031001",
 			Pangkat:   "Pembina Utama",
-			Jabatan:   "dekan",
+			Jabatan:   "Dekan",
 			Signature: "storage/signatures/dekan.png",
 			IsActive:  true,
 		}
@@ -114,7 +114,7 @@ func Seed(db *gorm.DB, force bool) error {
 			UserID:    wakilUser.ID,
 			NIP:       "197001011995031002",
 			Pangkat:   "Pembina",
-			Jabatan:   "wakil_dekan",
+			Jabatan:   "Wakil Dekan",
 			Signature: "storage/signatures/wakil.png",
 			IsActive:  true,
 		}

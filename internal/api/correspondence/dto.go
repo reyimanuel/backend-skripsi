@@ -11,12 +11,13 @@ type SubmitLetterRequest struct {
 }
 
 type Data struct {
-	ID           uint      `json:"id"`
-	LetterTypeID uint      `json:"letter_type_id"`
-	Subject      string    `json:"subject"`
-	Status       string    `json:"status"`
-	FilePath     string    `json:"file_path"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           uint           `json:"id"`
+	LetterTypeID uint           `json:"letter_type_id"`
+	Subject      string         `json:"subject"`
+	Status       string         `json:"status"`
+	FilePath     string         `json:"file_path"`
+	Payload      map[string]any `json:"payload"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 type Response struct {

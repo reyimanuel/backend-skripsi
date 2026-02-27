@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
@@ -25,7 +26,7 @@ func (r *Repository) GetByEmail(email string) (*migration.User, error) {
 
 func (r *Repository) GetStudentByUserID(tx *gorm.DB, userID uint) (*migration.Student, error) {
 	var student migration.Student
-	if err := tx.Where("user_id = ?", userID).First(&student).Error; err != nil {
+	if err := tx.Preload("User").Where("user_id = ?", userID).First(&student).Error; err != nil {
 		return nil, err
 	}
 	return &student, nil
@@ -33,7 +34,7 @@ func (r *Repository) GetStudentByUserID(tx *gorm.DB, userID uint) (*migration.St
 
 func (r *Repository) GetStudentByID(tx *gorm.DB, id uint) (*migration.Student, error) {
 	var student migration.Student
-	if err := tx.Where("id = ?", id).First(&student).Error; err != nil {
+	if err := tx.Preload("User").Where("id = ?", id).First(&student).Error; err != nil {
 		return nil, err
 	}
 	return &student, nil
@@ -50,8 +51,11 @@ func (r *Repository) GetRoleByCode(tx *gorm.DB, code string) (*migration.Role, e
 func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migration.Official, error) {
 	var officials []migration.Official
 
+	// Normalize: replace underscores with spaces so "WAKIL_DEKAN" matches "Wakil Dekan"
+	normalized := strings.ReplaceAll(role, "_", " ")
+
 	err := tx.Preload("User").
-		Where("jabatan = ? AND is_active = ?", role, true).
+		Where("LOWER(jabatan) = LOWER(?) AND is_active = ?", normalized, true).
 		Find(&officials).Error
 
 	if err != nil {

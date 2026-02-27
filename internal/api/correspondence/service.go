@@ -28,7 +28,7 @@ func NewService(repo *Repository, lettersRepo *letters.Repository, usersRepo *us
 
 func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Response, error) {
 	var letter *migration.Letter
-	var outputPDF string
+	var outputDocx string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 
@@ -43,11 +43,11 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 		}
 
 		data := map[string]string{
-			"nama":          student.User.Name,
+			"mahasiswa":     student.User.Name,
 			"nim":           student.NIM,
 			"program_studi": student.ProgramStudi,
 			"angkatan":      fmt.Sprintf("%d/%d", student.Angkatan, student.Angkatan+1),
-			"tanggal":       time.Now().Format("19 Januari 2005"),
+			"tanggal":       helpers.FormatIndonesianDate(time.Now()),
 			"tahun_ajaran":  helpers.GetCurrentAcademicYear(),
 			"tujuan_surat":  fmt.Sprintf("%v", req.Payload["tujuan_surat"]),
 		}
@@ -56,8 +56,8 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			data[k] = fmt.Sprintf("%v", v)
 		}
 
-		outputDocx := fmt.Sprintf("storage/generated/letter_%d.docx", time.Now().Unix())
-		outputPDF := fmt.Sprintf("storage/generated/letter_%d.pdf", time.Now().Unix())
+		ts := time.Now().Unix()
+		outputDocx = fmt.Sprintf("public/generated/letter_%d.docx", ts)
 
 		if err := helpers.FillTemplate(template.FilePath, outputDocx, data); err != nil {
 			return fmt.Errorf("error filling letter template %v", err)
@@ -65,11 +65,6 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 
 		if err := helpers.ConvertToPDF(outputDocx); err != nil {
 			return fmt.Errorf("error converting letter to PDF %v", err)
-		}
-
-		letter.FilePath = outputPDF
-		if err := tx.Save(letter).Error; err != nil {
-			return fmt.Errorf("error saving letter %v", err)
 		}
 
 		payloadBytes, err := json.Marshal(req.Payload)
@@ -84,7 +79,7 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			Subject:      req.Subject,
 			Payload:      datatypes.JSON(payloadBytes),
 			Status:       "submitted",
-			FilePath:     outputPDF,
+			FilePath:     outputDocx,
 		}
 
 		if err := s.Repo.CreateLetter(tx, letter); err != nil {
@@ -116,6 +111,12 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 		return nil, errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
 	}
 
+	var payloadMap map[string]any
+	if err := json.Unmarshal(letter.Payload, &payloadMap); err != nil {
+		log.Printf("error unmarshaling payload: %v", err)
+		payloadMap = make(map[string]any)
+	}
+
 	return &Response{
 		StatusCode: http.StatusOK,
 		Message:    "Surat berhasil dibuat",
@@ -124,7 +125,8 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			LetterTypeID: letter.LetterTypeID,
 			Subject:      letter.Subject,
 			Status:       letter.Status,
-			FilePath:     "/" + outputPDF,
+			Payload:      payloadMap,
+			FilePath:     "/" + outputDocx,
 			CreatedAt:    letter.CreatedAt,
 		},
 	}, nil
@@ -134,6 +136,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
 		if err != nil {
+			log.Printf("letter not found: id=%d err=%v", letterID, err)
 			return errs.NotFound("Surat tidak ditemukan")
 		}
 
@@ -154,7 +157,8 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 
 			official, err := s.UsersRepo.GetActiveOfficialByRole(tx, req.SignedByRole)
 			if err != nil {
-				return errs.NotFound("Pejabat tidak ditemukan")
+				log.Printf("official not found: jabatan=%q err=%v", req.SignedByRole, err)
+				return errs.NotFound("Pejabat dengan jabatan '" + req.SignedByRole + "' tidak ditemukan atau tidak aktif")
 			}
 
 			letter.Status = "forwarded"
@@ -168,7 +172,8 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 
 			official, err := s.UsersRepo.GetActiveOfficialByRole(tx, req.SignedByRole)
 			if err != nil {
-				return errs.NotFound("Pejabat tidak ditemukan")
+				log.Printf("official not found: jabatan=%q err=%v", req.SignedByRole, err)
+				return errs.NotFound("Pejabat dengan jabatan '" + req.SignedByRole + "' tidak ditemukan atau tidak aktif")
 			}
 
 			sequence, err := s.Repo.CountApprovedThisYear(tx)
@@ -180,23 +185,39 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 
 			student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
 			if err != nil {
+				log.Printf("student not found: id=%d err=%v", letter.StudentID, err)
 				return errs.NotFound("Data mahasiswa tidak ditemukan")
 			}
 
+			// Restore original payload fields so all template tags are available.
+			var origPayload map[string]any
+			_ = json.Unmarshal(letter.Payload, &origPayload)
+
 			data := map[string]string{
-				"Mahasiswa":  student.User.Name,
-				"NIM":        student.NIM,
-				"Prodi":      student.ProgramStudi,
-				"NomorSurat": nomorSurat,
-				"NamaTtd":    official.User.Name,
-				"nip":        official.NIP,
-				"pangkat":    official.Pangkat,
-				"jabatan":    official.Jabatan,
+				"mahasiswa":     student.User.Name,
+				"nim":           student.NIM,
+				"program_studi": student.ProgramStudi,
+				"angkatan":      fmt.Sprintf("%d/%d", student.Angkatan, student.Angkatan+1),
+				"tahun_ajaran":  helpers.GetCurrentAcademicYear(),
+				"tanggal":       helpers.FormatIndonesianDate(time.Now()),
+				"nomor_surat":   nomorSurat,
+				"official":      official.User.Name,
+				"nip":           official.NIP,
+				"pangkat":       official.Pangkat,
+				"jabatan":       official.Jabatan,
 			}
 
-			output := fmt.Sprintf("storage/generated/final_%d.docx", letter.ID)
+			// Merge original payload (e.g. tujuan_surat, etc.)
+			for k, v := range origPayload {
+				if _, exists := data[k]; !exists {
+					data[k] = fmt.Sprintf("%v", v)
+				}
+			}
+
+			output := fmt.Sprintf("public/generated/final_%d.docx", letter.ID)
 
 			if err := helpers.FillTemplate(letter.FilePath, output, data); err != nil {
+				log.Printf("fill template failed: src=%q dst=%q err=%v", letter.FilePath, output, err)
 				return errs.InternalServerError("Gagal mengisi template")
 			}
 
@@ -214,7 +235,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 
 	if err != nil {
 		log.Printf("error approving letter: %v", err)
-		return nil, errs.InternalServerError("Terjadi kesalahan dalam menyetujui surat")
+		return nil, err
 	}
 
 	return &Response{

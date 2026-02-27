@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -92,14 +93,39 @@ func ConvertDocxToPDF(inputPath string) (string, error) {
 }
 
 func ConvertToPDF(docxPath string) error {
+	absInput, err := filepath.Abs(docxPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	if _, err := os.Stat(absInput); err != nil {
+		return fmt.Errorf("source file not found: %w", err)
+	}
+
+	fmt.Println("Converting file:", absInput)
+
 	cmd := exec.Command(
-		`C:\Program Files\LibreOffice\program\soffice.exe`,
+		`C:\Program Files\LibreOffice\program\soffice.com`,
 		"--headless",
-		"--convert-to", "pdf",
-		docxPath,
-		"--outdir", filepath.Dir(docxPath),
+		"--nologo",
+		"--nolockcheck",
+		"--nodefault",
+		"--norestore",
+		"--convert-to", "pdf:writer_pdf_Export",
+		absInput,
+		"--outdir", filepath.Dir(absInput),
 	)
-	return cmd.Run()
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("libreoffice convert failed: %w | output: %s", err, string(out))
+	}
+
+	absPDF := strings.TrimSuffix(absInput, filepath.Ext(absInput)) + ".pdf"
+	if _, err := os.Stat(absPDF); err != nil {
+		return fmt.Errorf("pdf tidak terbentuk setelah konversi: %w", err)
+	}
+	return nil
 }
 
 func DetectMimeTypeFromPath(path string) (string, error) {
@@ -116,6 +142,26 @@ func DetectMimeTypeFromPath(path string) (string, error) {
 	}
 
 	return http.DetectContentType(buffer), nil
+}
+
+// normalizeDocxPlaceholders removes XML tags that Word inserts *inside*
+// {{key}} spans when it splits a run. For example Word may store {{dekan}} as:
+//
+//	<w:t>{{</w:t></w:r><w:r><w:t>dekan</w:t></w:r><w:r><w:t>}}</w:t>
+//
+// This function collapses those fragments back into a plain {{dekan}} token
+// so the subsequent strings.ReplaceAll can find and replace it.
+func normalizeDocxPlaceholders(xmlContent string) string {
+	// Match {{ ... }} where the interior may contain XML tags or whitespace.
+	re := regexp.MustCompile(`\{\{(?:[^{}]|<[^>]+>|\s)*?\}\}`)
+	xmlTagRe := regexp.MustCompile(`<[^>]+>`)
+
+	return re.ReplaceAllStringFunc(xmlContent, func(match string) string {
+		// Strip all XML tags and extra whitespace from inside the placeholder.
+		clean := xmlTagRe.ReplaceAllString(match, "")
+		clean = strings.Join(strings.Fields(clean), "")
+		return clean
+	})
 }
 
 // FillTemplate copies a .docx file from srcPath to dstPath while replacing
@@ -147,6 +193,7 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 		if err != nil {
 			return err
 		}
+
 		content, err := io.ReadAll(rc)
 		rc.Close()
 		if err != nil {
@@ -154,18 +201,18 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 		}
 
 		if f.Name == "word/document.xml" {
-			s := string(content)
+			s := normalizeDocxPlaceholders(string(content))
 			for key, val := range data {
-				s = strings.ReplaceAll(s, "{{{"+key+"}}}", val)
 				s = strings.ReplaceAll(s, "{{"+key+"}}", val)
 			}
 			content = []byte(s)
 		}
 
-		fw, err := w.CreateHeader(&f.FileHeader)
+		fw, err := w.Create(f.Name) // ← FIX DI SINI
 		if err != nil {
 			return err
 		}
+
 		if _, err := fw.Write(content); err != nil {
 			return err
 		}
@@ -183,6 +230,14 @@ func GetCurrentAcademicYear() string {
 	}
 
 	return fmt.Sprintf("%d/%d", year-1, year)
+}
+
+func FormatIndonesianDate(t time.Time) string {
+	months := []string{
+		"", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+		"Juli", "Agustus", "September", "Oktober", "November", "Desember",
+	}
+	return fmt.Sprintf("%d %s %d", t.Day(), months[t.Month()], t.Year())
 }
 
 func GenerateLetterNumber(sequence int64) string {

@@ -116,9 +116,9 @@ type Letter struct {
 type LetterApproval struct {
 	ID uint `gorm:"primaryKey"`
 
-	LetterID   uint `gorm:"not null"`
-	RoleID     uint `gorm:"not null"`
-	ApproverID uint `gorm:"not null"`
+	LetterID   uint  `gorm:"not null"`
+	RoleID     uint  `gorm:"not null"`
+	ApproverID *uint `gorm:"default:null"`
 
 	Status string `gorm:"size:30;not null"`
 	// pending, approved, rejected
@@ -128,7 +128,7 @@ type LetterApproval struct {
 
 	Letter   Letter
 	Role     Role
-	Approver User
+	Approver *User
 }
 
 type LetterHistory struct {

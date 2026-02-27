@@ -61,7 +61,7 @@ func (r *Repository) CountApprovedThisYear(tx *gorm.DB) (int64, error) {
 
 	err := tx.Model(&migration.Letter{}).
 		Where("status = ?", "approved").
-		Where("approved_at >= ? AND approved_at < ?", startOfYear, endOfYear).
+		Where("signed_at >= ? AND signed_at < ?", startOfYear, endOfYear).
 		Count(&count).Error
 
 	return count, err
