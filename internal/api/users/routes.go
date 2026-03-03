@@ -11,6 +11,6 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.POST("/login", handler.Login)
-	// r.POST("/register", handler.Register)
+	r.POST("/register", handler.RegisterStudent)
 	// r.GET("/me", middleware.Auth(), handler.Me)
 }

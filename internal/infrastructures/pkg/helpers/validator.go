@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -61,4 +63,37 @@ func ParseTime(timeStr string) string {
 		return ""
 	}
 	return timeStr
+}
+
+func MatchNameWithEmail(name, email string) bool {
+	email = strings.ToLower(email)
+
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return false
+	}
+
+	localPart := parts[0]
+	domain := parts[1]
+
+	// 2️⃣ Domain wajib
+	if domain != "student.unsrat.ac.id" {
+		return false
+	}
+
+	// 3️⃣ Extract first & last name
+	nameParts := strings.Fields(strings.ToLower(name))
+	if len(nameParts) < 2 {
+		return false
+	}
+
+	first := regexp.QuoteMeta(nameParts[0])
+	last := regexp.QuoteMeta(nameParts[len(nameParts)-1])
+
+	// 4️⃣ Regex: firstname + lastname + optional number
+	pattern := fmt.Sprintf("^%s%s\\d*$", first, last)
+
+	re := regexp.MustCompile(pattern)
+
+	return re.MatchString(localPart)
 }

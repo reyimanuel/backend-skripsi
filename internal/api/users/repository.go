@@ -72,3 +72,27 @@ func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migrati
 
 	return &officials[0], nil
 }
+
+func (r *Repository) GetByNIM(nim string) (*migration.Student, error) {
+	var student migration.Student
+	if err := r.DB.
+		Preload("User").
+		Where("nim = ?", nim).
+		First(&student).Error; err != nil {
+		return nil, err
+	}
+	return &student, nil
+}
+
+func (r *Repository) CreateStudentWithUser(tx *gorm.DB, user *migration.User, student *migration.Student) error {
+	if err := tx.Create(user).Error; err != nil {
+		return err
+	}
+
+	student.UserID = user.ID
+	if err := tx.Create(student).Error; err != nil {
+		return err
+	}
+
+	return nil
+}

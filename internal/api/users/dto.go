@@ -5,6 +5,12 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 }
 
+type RegisterRequest struct {
+	NIM      string `json:"nim" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
 type Response struct {
 	StatusCode int    `json:"status_code"`
 	Message    string `json:"message"`
