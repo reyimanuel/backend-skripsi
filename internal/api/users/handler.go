@@ -2,6 +2,7 @@ package user
 
 import (
 	"log"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
@@ -19,14 +20,13 @@ func (h *Handler) Login(ctx *gin.Context) {
 	var payload LoginRequest
 	if err := ctx.ShouldBindJSON(&payload); err != nil {
 		log.Printf("error binding login payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
 		return
 	}
 
 	response, err := h.Service.Login(&payload)
 	if err != nil {
-		log.Printf("error during login: %v", err)
-		errs.HandlerError(ctx, errs.InternalServerError("terjadi kesalahan"))
+		errs.HandlerError(ctx, err)
 		return
 	}
 
@@ -34,18 +34,86 @@ func (h *Handler) Login(ctx *gin.Context) {
 }
 
 func (h *Handler) RegisterStudent(ctx *gin.Context) {
-
-	var req RegisterRequest
-
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	var payload RegisterStudentRequest
+	if err := ctx.ShouldBind(&payload); err != nil {
 		log.Printf("error binding register payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
 		return
 	}
 
-	response, err := h.Service.RegisterStudent(req.NIM, req.Email, req.Password)
+	file, err := ctx.FormFile("kredensial")
 	if err != nil {
-		log.Printf("error creating student account: %v", err)
+		errs.HandlerError(ctx, errs.BadRequest("File kredensial wajib dilampirkan"))
+		return
+	}
+
+	response, err := h.Service.RegisterStudent(&payload, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) GetPendingStudents(ctx *gin.Context) {
+	response, err := h.Service.GetPendingStudents()
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) ApproveStudent(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
+		return
+	}
+
+	response, err := h.Service.ApproveStudent(uint(id))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) RejectStudent(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
+		return
+	}
+
+	response, err := h.Service.RejectStudent(uint(id))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) RegisterWithKRS(ctx *gin.Context) {
+	var payload RegisterWithKRSRequest
+	if err := ctx.ShouldBind(&payload); err != nil {
+		log.Printf("error binding krs registration payload: %v", err)
+		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
+		return
+	}
+
+	file, err := ctx.FormFile("krs")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("File KRS wajib dilampirkan"))
+		return
+	}
+
+	response, err := h.Service.RegisterWithKRS(&payload, file)
+	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
 	}

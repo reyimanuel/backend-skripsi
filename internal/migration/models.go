@@ -25,22 +25,23 @@ type User struct {
 	Name      string    `gorm:"column:name;not null"`
 	Email     string    `gorm:"column:email;uniqueIndex;not null"`
 	Password  string    `gorm:"column:password;not null"`
-	IsActive  bool      `gorm:"column:IsActive;not null;default:true"`
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	Verified  bool      `gorm:"column:verified;not null;default:false"` // diaktifkan oleh admin setelah verifikasi data
 
 	Roles   []Role   `gorm:"many2many:user_roles;"`
 	Student *Student `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 type Official struct {
-	ID        uint   `gorm:"primaryKey"`
-	UserID    uint   `gorm:"not null"`
-	NIP       string `gorm:"size:50"`
-	Pangkat   string `gorm:"size:100"`
-	Jabatan   string `gorm:"size:100"` // Dekan / Wakil Dekan
-	Signature string `gorm:"size:255"` // path tanda tangan
-	IsActive  bool   `gorm:"default:true"`
+	ID            uint   `gorm:"primaryKey"`
+	UserID        uint   `gorm:"not null"`
+	NIP           string `gorm:"size:50"`
+	Pangkat       string `gorm:"size:100"`
+	Jabatan       string `gorm:"size:100"`     // Dean, Vice Dean, etc.
+	Signature     string `gorm:"size:255"`     // path to signature image
+	IsActive      bool   `gorm:"default:true"` // if the official is still active on duty
+	EmailVerified bool   `gorm:"default:false"`
 
 	User User `gorm:"constraint:OnDelete:CASCADE;"`
 }
@@ -60,11 +61,13 @@ type Role struct {
 }
 
 type Student struct {
-	ID           uint   `gorm:"primaryKey"`
-	UserID       uint   `gorm:"uniqueIndex;not null"`
-	NIM          string `gorm:"size:20;uniqueIndex;not null"`
-	ProgramStudi string `gorm:"size:100;not null"`
-	Angkatan     int
+	ID             uint   `gorm:"primaryKey"`
+	UserID         uint   `gorm:"uniqueIndex;not null"`
+	NIM            string `gorm:"size:20;uniqueIndex;not null"`
+	ProgramStudi   string `gorm:"size:100;not null"`
+	Angkatan       int
+	EmailVerified  bool   `gorm:"default:false"`
+	KredensialPath string `gorm:"size:255"` // path to uploaded credential (KTM/KRS)
 
 	User    User
 	Letters []Letter

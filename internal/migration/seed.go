@@ -61,6 +61,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:    "admin@kampus.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["ADMIN"]},
+			Verified: true,
 		}
 
 		dekanUser := User{
@@ -68,6 +69,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:    "dekan@kampus.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["DEKAN"]},
+			Verified: true,
 		}
 
 		wakilUser := User{
@@ -75,6 +77,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:    "wakildekan@kampus.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["WAKIL_DEKAN"]},
+			Verified: true,
 		}
 
 		mahasiswa := User{
@@ -82,6 +85,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:    "mahasiswa@test.ac.id",
 			Password: pwd,
 			Roles:    []Role{roleMap["MAHASISWA"]},
+			Verified: true,
 		}
 
 		users := []*User{&admin, &dekanUser, &wakilUser, &mahasiswa}
