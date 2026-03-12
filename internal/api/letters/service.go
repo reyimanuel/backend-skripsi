@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
@@ -107,26 +105,10 @@ func (s *Service) PreviewTemplate(letterTypeID uint) (string, error) {
 		return "", err
 	}
 
-	pdfPath := strings.TrimSuffix(docxPath, filepath.Ext(docxPath)) + ".pdf"
-
-	// cek apakah pdf sudah ada
-	docxStat, err := os.Stat(docxPath)
+	pdfPath, err := helpers.EnsurePDFPreview(docxPath)
 	if err != nil {
-		return "", err
-	}
-
-	pdfStat, err := os.Stat(pdfPath)
-
-	// convert jika belum ada atau docx lebih baru
-	if os.IsNotExist(err) || docxStat.ModTime().After(pdfStat.ModTime()) {
-
-		convertedPath, err := helpers.ConvertDocxToPDF(docxPath)
-		if err != nil {
-			fmt.Printf("gagal convert docx ke pdf: %v\n", err)
-			return "", errs.InternalServerError("Gagal convert PDF")
-		}
-
-		pdfPath = convertedPath
+		fmt.Printf("gagal siapkan preview pdf: %v\n", err)
+		return "", errs.InternalServerError("Gagal convert PDF")
 	}
 
 	return pdfPath, nil

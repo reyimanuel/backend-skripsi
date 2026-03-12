@@ -128,6 +128,29 @@ func ConvertToPDF(docxPath string) error {
 	return nil
 }
 
+func EnsurePDFPreview(docxPath string) (string, error) {
+	absInput, err := filepath.Abs(docxPath)
+	if err != nil {
+		return "", err
+	}
+
+	docxStat, err := os.Stat(absInput)
+	if err != nil {
+		return "", err
+	}
+
+	pdfPath := strings.TrimSuffix(absInput, filepath.Ext(absInput)) + ".pdf"
+	pdfStat, err := os.Stat(pdfPath)
+	if os.IsNotExist(err) || docxStat.ModTime().After(pdfStat.ModTime()) {
+		return ConvertDocxToPDF(absInput)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return pdfPath, nil
+}
+
 func DetectMimeTypeFromPath(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {

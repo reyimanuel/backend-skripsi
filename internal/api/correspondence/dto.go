@@ -16,8 +16,14 @@ type Data struct {
 	Subject      string         `json:"subject"`
 	Status       string         `json:"status"`
 	FilePath     string         `json:"file_path"`
+	PreviewURL   string         `json:"preview_url,omitempty"`
 	Payload      map[string]any `json:"payload"`
 	CreatedAt    time.Time      `json:"created_at"`
+}
+
+type PreviewResponse struct {
+	ID         uint   `json:"id"`
+	PreviewURL string `json:"preview_url"`
 }
 
 type Response struct {

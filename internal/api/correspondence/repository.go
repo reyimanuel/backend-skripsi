@@ -40,6 +40,18 @@ func (r *Repository) CreateApproval(tx *gorm.DB, approval *migration.LetterAppro
 	return nil
 }
 
+func (r *Repository) GetApprovalByLetterID(tx *gorm.DB, letterID uint) (*migration.LetterApproval, error) {
+	var approval migration.LetterApproval
+	if err := tx.Where("letter_id = ?", letterID).First(&approval).Error; err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+func (r *Repository) SaveApproval(tx *gorm.DB, approval *migration.LetterApproval) error {
+	return tx.Save(approval).Error
+}
+
 func (r *Repository) GetTemplateByLetterType(tx *gorm.DB, letterTypeID uint) (*migration.LetterTemplate, error) {
 	var t migration.LetterTemplate
 
