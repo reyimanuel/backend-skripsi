@@ -6,6 +6,77 @@ import (
 	"gorm.io/gorm"
 )
 
+func runVerificationRefactorMigration(db *gorm.DB) error {
+	// Backfill centralized user email verification from legacy role-specific flags.
+	if err := db.Exec(`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'students' AND column_name = 'email_verified'
+			) THEN
+				UPDATE users
+				SET email_verified_at = COALESCE(email_verified_at, NOW())
+				FROM students
+				WHERE students.user_id = users.id
+				  AND students.email_verified = TRUE;
+			END IF;
+
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'officials' AND column_name = 'email_verified'
+			) THEN
+				UPDATE users
+				SET email_verified_at = COALESCE(email_verified_at, NOW())
+				FROM officials
+				WHERE officials.user_id = users.id
+				  AND officials.email_verified = TRUE;
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		return fmt.Errorf("failed backfilling email_verified_at: %w", err)
+	}
+
+	// Backfill student admin verification status from legacy users.verified flag.
+	if err := db.Exec(`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'users' AND column_name = 'verified'
+			) THEN
+				UPDATE students
+				SET admin_verification_status = CASE
+					WHEN users.verified = TRUE THEN 'approved'
+					ELSE COALESCE(NULLIF(students.admin_verification_status, ''), 'pending')
+				END,
+				admin_verified_at = CASE
+					WHEN users.verified = TRUE THEN COALESCE(students.admin_verified_at, NOW())
+					ELSE students.admin_verified_at
+				END,
+				rejection_reason = CASE
+					WHEN users.verified = TRUE THEN ''
+					ELSE students.rejection_reason
+				END
+				FROM users
+				WHERE students.user_id = users.id;
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		return fmt.Errorf("failed backfilling student admin verification status: %w", err)
+	}
+
+	if err := db.Exec(`
+		ALTER TABLE students
+		ADD CONSTRAINT students_admin_verification_status_check
+		CHECK (admin_verification_status IN ('pending','approved','rejected'))
+	`).Error; err != nil {
+		fmt.Printf("⚠️  could not add students status check constraint (may already exist): %v\n", err)
+	}
+
+	return nil
+}
+
 func RunMigration(db *gorm.DB, force bool) error {
 	fmt.Println("Running migrations...")
 
@@ -32,6 +103,10 @@ func RunMigration(db *gorm.DB, force bool) error {
 		return fmt.Errorf("gagal migrasi: %w", err)
 	}
 
+	if err := runVerificationRefactorMigration(db); err != nil {
+		return err
+	}
+
 	// Make approver_id nullable — AutoMigrate won't loosen NOT NULL on its own.
 	if err := db.Exec(`ALTER TABLE letter_approvals ALTER COLUMN approver_id DROP NOT NULL`).Error; err != nil {
 		fmt.Printf("⚠️  could not alter approver_id (may already be nullable): %v\n", err)
@@ -52,6 +127,9 @@ func RunMigrationOnly(db *gorm.DB) error {
 	fmt.Println("Running migrations (schema only, no seeding)...")
 	if err := db.AutoMigrate(Models...); err != nil {
 		return fmt.Errorf("gagal migrasi: %w", err)
+	}
+	if err := runVerificationRefactorMigration(db); err != nil {
+		return err
 	}
 	if err := db.Exec(`ALTER TABLE letter_approvals ALTER COLUMN approver_id DROP NOT NULL`).Error; err != nil {
 		fmt.Printf("⚠️  could not alter approver_id (may already be nullable): %v\n", err)

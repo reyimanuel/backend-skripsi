@@ -21,27 +21,27 @@ var Models = []any{
 }
 
 type User struct {
-	ID        uint      `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
-	Name      string    `gorm:"column:name;not null"`
-	Email     string    `gorm:"column:email;uniqueIndex;not null"`
-	Password  string    `gorm:"column:password;not null"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
-	Verified  bool      `gorm:"column:verified;not null;default:false"` // diaktifkan oleh admin setelah verifikasi data
+	ID              uint       `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
+	Name            string     `gorm:"column:name;not null"`
+	Email           string     `gorm:"column:email;uniqueIndex;not null"`
+	Password        string     `gorm:"column:password;not null"`
+	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	EmailVerifiedAt *time.Time `gorm:"column:email_verified_at;index"`
+	IsActive        bool       `gorm:"column:is_active;not null;default:true"`
 
 	Roles   []Role   `gorm:"many2many:user_roles;"`
 	Student *Student `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 type Official struct {
-	ID            uint   `gorm:"primaryKey"`
-	UserID        uint   `gorm:"not null"`
-	NIP           string `gorm:"size:50"`
-	Pangkat       string `gorm:"size:100"`
-	Jabatan       string `gorm:"size:100"`     // Dean, Vice Dean, etc.
-	Signature     string `gorm:"size:255"`     // path to signature image
-	IsActive      bool   `gorm:"default:true"` // if the official is still active on duty
-	EmailVerified bool   `gorm:"default:false"`
+	ID        uint   `gorm:"primaryKey"`
+	UserID    uint   `gorm:"not null"`
+	NIP       string `gorm:"size:50"`
+	Pangkat   string `gorm:"size:100"`
+	Jabatan   string `gorm:"size:100"`                      // Dean, Vice Dean, etc.
+	Signature string `gorm:"size:255"`                      // path to signature image
+	IsOnDuty  bool   `gorm:"column:is_active;default:true"` // if the official is still active on duty
 
 	User User `gorm:"constraint:OnDelete:CASCADE;"`
 }
@@ -61,13 +61,17 @@ type Role struct {
 }
 
 type Student struct {
-	ID             uint   `gorm:"primaryKey"`
-	UserID         uint   `gorm:"uniqueIndex;not null"`
-	NIM            string `gorm:"size:20;uniqueIndex;not null"`
-	ProgramStudi   string `gorm:"size:100;not null"`
-	Angkatan       int
-	EmailVerified  bool   `gorm:"default:false"`
-	KredensialPath string `gorm:"size:255"` // path to uploaded credential (KTM/KRS)
+	ID                      uint   `gorm:"primaryKey"`
+	UserID                  uint   `gorm:"uniqueIndex;not null"`
+	NIM                     string `gorm:"size:20;uniqueIndex;not null"`
+	ProgramStudi            string `gorm:"size:100;not null"`
+	Angkatan                int
+	KredensialPath          string `gorm:"size:255"` // path to uploaded credential (KTM/KRS)
+	AdminVerificationStatus string `gorm:"size:20;not null;default:pending;index"`
+	AdminVerifiedBy         *uint  `gorm:"index"`
+	AdminVerifier           *User  `gorm:"foreignKey:AdminVerifiedBy;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	AdminVerifiedAt         *time.Time
+	RejectionReason         string `gorm:"type:text"`
 
 	User    User
 	Letters []Letter

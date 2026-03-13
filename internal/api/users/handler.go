@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 )
 
@@ -56,8 +57,56 @@ func (h *Handler) RegisterStudent(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) GetPendingUsers(ctx *gin.Context) {
-	response, err := h.Service.GetPendingUsers()
+func (h *Handler) GetMe(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	response, err := h.Service.GetMe(userID)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) VerifyEmail(ctx *gin.Context) {
+	var req VerifyEmailRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
+	response, err := h.Service.VerifyEmail(req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) ResendVerificationEmail(ctx *gin.Context) {
+	var req ResendVerificationRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
+	response, err := h.Service.ResendVerificationEmail(req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) GetPendingStudents(ctx *gin.Context) {
+	response, err := h.Service.GetPendingStudents()
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -76,14 +125,20 @@ func (h *Handler) GetAllUsers(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) ApproveUser(ctx *gin.Context) {
+func (h *Handler) ApproveStudent(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
 	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
 	if err != nil {
 		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
 		return
 	}
 
-	response, err := h.Service.ApproveUser(uint(id))
+	response, err := h.Service.ApproveStudent(uint(id), adminID)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -92,14 +147,48 @@ func (h *Handler) ApproveUser(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) RejectUser(ctx *gin.Context) {
+func (h *Handler) RejectStudent(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var req RejectStudentRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
 	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
 	if err != nil {
 		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
 		return
 	}
 
-	response, err := h.Service.RejectUser(uint(id))
+	response, err := h.Service.RejectStudent(uint(id), adminID, req.Reason)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) CreateOfficial(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var req CreateOfficialRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
+	response, err := h.Service.CreateOfficial(adminID, req)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

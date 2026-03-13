@@ -1,0 +1,142 @@
+package helpers
+
+import (
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/smtp"
+	"strings"
+
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/config"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
+)
+
+func SendEmail(toEmail string, subject string, plainTextBody string) error {
+	cfg := config.Get()
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	smtpCfg := cfg.SMTP
+	if smtpCfg.Host == "" {
+		return fmt.Errorf("SMTP_HOST is not set")
+	}
+	if smtpCfg.Port == "" {
+		return fmt.Errorf("SMTP_PORT is not set")
+	}
+
+	fromEmail := strings.TrimSpace(smtpCfg.SenderEmail)
+	if fromEmail == "" {
+		fromEmail = strings.TrimSpace(smtpCfg.User)
+	}
+	if fromEmail == "" {
+		return fmt.Errorf("SMTP_SENDER_EMAIL is not set and SMTP_USER is empty")
+	}
+
+	msg := buildPlainTextMessage(fromEmail, toEmail, subject, plainTextBody)
+
+	client, isTLS, err := dialSMTPClient(smtpCfg.Host, smtpCfg.Port)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if smtpCfg.User != "" && smtpCfg.Pass != "" {
+		if !isTLS {
+			return fmt.Errorf("refusing to authenticate over non-TLS SMTP connection")
+		}
+		auth := smtp.PlainAuth("", smtpCfg.User, smtpCfg.Pass, smtpCfg.Host)
+		if err := client.Auth(auth); err != nil {
+			return err
+		}
+	}
+
+	if err := client.Mail(fromEmail); err != nil {
+		return err
+	}
+	if err := client.Rcpt(toEmail); err != nil {
+		return err
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte(msg)); err != nil {
+		_ = w.Close()
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+
+	return client.Quit()
+}
+
+func buildPlainTextMessage(fromEmail string, toEmail string, subject string, plainTextBody string) string {
+	// RFC 5322 requires CRLF line endings.
+	cleanBody := strings.ReplaceAll(plainTextBody, "\r\n", "\n")
+	cleanBody = strings.ReplaceAll(cleanBody, "\n", "\r\n")
+
+	headers := []string{
+		"From: " + fromEmail,
+		"To: " + toEmail,
+		"Subject: " + subject,
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"Content-Transfer-Encoding: 8bit",
+		"",
+	}
+
+	return strings.Join(headers, "\r\n") + cleanBody + "\r\n"
+}
+
+func dialSMTPClient(host string, port string) (*smtp.Client, bool, error) {
+	// Implicit TLS is commonly on port 465.
+	if port == "465" {
+		conn, err := tls.Dial("tcp", net.JoinHostPort(host, port), &tls.Config{ServerName: host})
+		if err != nil {
+			return nil, false, err
+		}
+		client, err := smtp.NewClient(conn, host)
+		if err != nil {
+			_ = conn.Close()
+			return nil, false, err
+		}
+		return client, true, nil
+	}
+
+	client, err := smtp.Dial(net.JoinHostPort(host, port))
+	if err != nil {
+		return nil, false, err
+	}
+
+	isTLS := false
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+			_ = client.Close()
+			return nil, false, err
+		}
+		isTLS = true
+	}
+
+	return client, isTLS, nil
+}
+
+func SendVerificationEmail(userID uint, email string, name string) error {
+	verifyToken, err := token.GenerateEmailVerificationToken(userID, email)
+	if err != nil {
+		return err
+	}
+
+	body := fmt.Sprintf(
+		"Halo %s,\n\nGunakan token berikut untuk verifikasi email akun Anda:\n\n%s\n\nJika Anda tidak merasa mendaftar, abaikan email ini.",
+		name,
+		verifyToken,
+	)
+
+	err = SendEmail(email, "Verifikasi Email Akun", body)
+	if err != nil {
+		return err
+	}
+	return nil
+}

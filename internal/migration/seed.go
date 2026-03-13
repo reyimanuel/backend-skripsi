@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"gorm.io/gorm"
@@ -16,6 +17,7 @@ func Seed(db *gorm.DB, force bool) error {
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
 
 		if err := tx.Exec(`
 			TRUNCATE TABLE 
@@ -57,35 +59,39 @@ func Seed(db *gorm.DB, force bool) error {
 		}
 
 		admin := User{
-			Name:     "Admin Fakultas",
-			Email:    "admin@kampus.ac.id",
-			Password: pwd,
-			Roles:    []Role{roleMap["ADMIN"]},
-			Verified: true,
+			Name:            "Admin Fakultas",
+			Email:           "admin@kampus.ac.id",
+			Password:        pwd,
+			Roles:           []Role{roleMap["ADMIN"]},
+			EmailVerifiedAt: &now,
+			IsActive:        true,
 		}
 
 		dekanUser := User{
-			Name:     "Prof. Dr. Dekan",
-			Email:    "dekan@kampus.ac.id",
-			Password: pwd,
-			Roles:    []Role{roleMap["DEKAN"]},
-			Verified: true,
+			Name:            "Prof. Dr. Dekan",
+			Email:           "dekan@kampus.ac.id",
+			Password:        pwd,
+			Roles:           []Role{roleMap["DEKAN"]},
+			EmailVerifiedAt: &now,
+			IsActive:        true,
 		}
 
 		wakilUser := User{
-			Name:     "Dr. Wakil Dekan",
-			Email:    "wakildekan@kampus.ac.id",
-			Password: pwd,
-			Roles:    []Role{roleMap["WAKIL_DEKAN"]},
-			Verified: true,
+			Name:            "Dr. Wakil Dekan",
+			Email:           "wakildekan@kampus.ac.id",
+			Password:        pwd,
+			Roles:           []Role{roleMap["WAKIL_DEKAN"]},
+			EmailVerifiedAt: &now,
+			IsActive:        true,
 		}
 
 		mahasiswa := User{
-			Name:     "Mahasiswa Test",
-			Email:    "mahasiswa@test.ac.id",
-			Password: pwd,
-			Roles:    []Role{roleMap["MAHASISWA"]},
-			Verified: true,
+			Name:            "Mahasiswa Test",
+			Email:           "mahasiswa@test.ac.id",
+			Password:        pwd,
+			Roles:           []Role{roleMap["MAHASISWA"]},
+			EmailVerifiedAt: &now,
+			IsActive:        true,
 		}
 
 		users := []*User{&admin, &dekanUser, &wakilUser, &mahasiswa}
@@ -95,10 +101,13 @@ func Seed(db *gorm.DB, force bool) error {
 		}
 
 		student := Student{
-			UserID:       mahasiswa.ID,
-			NIM:          "210123456",
-			ProgramStudi: "Teknik Informatika",
-			Angkatan:     2021,
+			UserID:                  mahasiswa.ID,
+			NIM:                     "210123456",
+			ProgramStudi:            "Teknik Informatika",
+			Angkatan:                2021,
+			AdminVerificationStatus: "approved",
+			AdminVerifiedBy:         &admin.ID,
+			AdminVerifiedAt:         &now,
 		}
 
 		if err := tx.Create(&student).Error; err != nil {
@@ -111,7 +120,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Pangkat:   "Pembina Utama",
 			Jabatan:   "Dekan",
 			Signature: "storage/signatures/dekan.png",
-			IsActive:  true,
+			IsOnDuty:  true,
 		}
 
 		wakilOfficial := Official{
@@ -120,7 +129,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Pangkat:   "Pembina",
 			Jabatan:   "Wakil Dekan",
 			Signature: "storage/signatures/wakil.png",
-			IsActive:  true,
+			IsOnDuty:  true,
 		}
 
 		if err := tx.Create(&dekanOfficial).Error; err != nil {

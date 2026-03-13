@@ -7,28 +7,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	Repo     *Repository
-	EmailSvc *helpers.SendGridEmailService
+	Repo *Repository
 }
 
 func NewService(repo *Repository) *Service {
 	return &Service{
-		Repo:     repo,
-		EmailSvc: helpers.NewSendGridEmailService(),
+		Repo: repo,
 	}
 }
 
 func (s *Service) Login(payload *LoginRequest) (*Response, error) {
-	user, err := s.Repo.GetByEmail(payload.Email)
+	user, err := s.Repo.GetByEmail(strings.TrimSpace(payload.Email))
 	if err != nil {
 		return nil, errs.Unauthorized("Email atau Password Salah")
 	}
@@ -37,19 +37,8 @@ func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 		return nil, errs.Unauthorized("Email atau Password Salah")
 	}
 
-	// For students: check email verification first, then admin activation.
-	for _, role := range user.Roles {
-		if role.Code == "MAHASISWA" {
-			student, err := s.Repo.GetStudentByUserID(s.Repo.DB, user.ID)
-			if err != nil || !student.EmailVerified {
-				return nil, errs.Unauthorized("Email belum diverifikasi. Silakan cek inbox email Anda.")
-			}
-			break
-		}
-	}
-
-	if !user.Verified {
-		return nil, errs.Unauthorized("Akun Anda belum diaktifkan. Silakan tunggu konfirmasi admin.")
+	if err := s.ensureLoginEligibility(user); err != nil {
+		return nil, err
 	}
 
 	access, err := token.GenerateToken(user.ID, user.Email, user.RoleSlice())
@@ -113,14 +102,15 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 		Name:     payload.Name,
 		Email:    payload.Email,
 		Password: hashedPwd,
-		Verified: false,
 		Roles:    []migration.Role{*mahasiswaRole},
+		IsActive: true,
 	}
 	student := &migration.Student{
-		NIM:            payload.NIM,
-		ProgramStudi:   payload.ProgramStudi,
-		Angkatan:       payload.Angkatan,
-		KredensialPath: filePath,
+		NIM:                     payload.NIM,
+		ProgramStudi:            payload.ProgramStudi,
+		Angkatan:                payload.Angkatan,
+		KredensialPath:          filePath,
+		AdminVerificationStatus: "pending",
 	}
 
 	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
@@ -131,46 +121,40 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
 	}
 
+	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
+		log.Printf("error sending verification email: %v", err)
+	}
+
 	return &Response{
 		StatusCode: http.StatusCreated,
-		Message:    "Pendaftaran berhasil. silahkan tunggu verifikasi admin.",
+		Message:    "Pendaftaran berhasil. Silakan verifikasi email lalu tunggu verifikasi admin.",
 	}, nil
 }
 
-func (s *Service) GetPendingUsers() (*Response, error) {
-	users, err := s.Repo.GetPendingUsers(s.Repo.DB)
+func (s *Service) GetPendingStudents() (*Response, error) {
+	students, err := s.Repo.GetPendingStudents(s.Repo.DB)
 	if err != nil {
-		log.Printf("error mengambil pending users: %v", err)
-		return nil, errs.InternalServerError("gagal mengambil data user pending")
+		log.Printf("error mengambil pending students: %v", err)
+		return nil, errs.InternalServerError("gagal mengambil data mahasiswa pending")
 	}
 
-	officialMap, err := s.loadOfficialMap(extractUserIDs(users))
-	if err != nil {
-		log.Printf("error mengambil data official pending: %v", err)
-		return nil, errs.InternalServerError("gagal mengambil data user pending")
-	}
-
-	result := make([]PendingUserResponse, 0, len(users))
-	for _, usr := range users {
-		item := PendingUserResponse{
-			UserID:    usr.ID,
-			Name:      usr.Name,
-			Email:     usr.Email,
-			Roles:     usr.RoleSlice(),
-			CreatedAt: usr.CreatedAt,
+	result := make([]PendingStudentResponse, 0, len(students))
+	for _, student := range students {
+		item := PendingStudentResponse{
+			StudentID:               student.ID,
+			UserID:                  student.UserID,
+			Name:                    student.User.Name,
+			Email:                   student.User.Email,
+			NIM:                     student.NIM,
+			ProgramStudi:            student.ProgramStudi,
+			Kredensial:              student.KredensialPath,
+			AdminVerificationStatus: student.AdminVerificationStatus,
+			RejectionReason:         student.RejectionReason,
+			EmailVerifiedAt:         derefTime(student.User.EmailVerifiedAt),
+			CreatedAt:               student.CreatedAt,
 		}
-
-		if usr.Student != nil {
-			item.UserType = "student"
-			item.NIM = usr.Student.NIM
-			item.ProgramStudi = usr.Student.ProgramStudi
-			item.Kredensial = usr.Student.KredensialPath
-		} else if official, exists := officialMap[usr.ID]; exists {
-			item.UserType = "official"
-			item.Jabatan = official.Jabatan
-			item.NIP = official.NIP
-		} else {
-			item.UserType = "user"
+		if student.AdminVerifiedAt != nil {
+			item.AdminVerifiedAt = *student.AdminVerifiedAt
 		}
 
 		result = append(result, item)
@@ -178,7 +162,7 @@ func (s *Service) GetPendingUsers() (*Response, error) {
 
 	return &Response{
 		StatusCode: http.StatusOK,
-		Message:    "Data user pending berhasil diambil",
+		Message:    "Data mahasiswa pending berhasil diambil",
 		Data:       result,
 	}, nil
 }
@@ -192,23 +176,21 @@ func (s *Service) GetAllUsers() (*Response, error) {
 
 	result := make([]UserListResponse, 0, len(users))
 	for _, usr := range users {
-		emailVerified := false
-		for _, role := range usr.Roles {
-			if role.Code == "MAHASISWA" && usr.Student != nil {
-				emailVerified = usr.Student.EmailVerified
-				break
-			}
-		}
-
 		result = append(result, UserListResponse{
-			UserID:        usr.ID,
-			Name:          usr.Name,
-			Email:         usr.Email,
-			Roles:         usr.RoleSlice(),
-			Verified:      usr.Verified,
-			EmailVerified: emailVerified,
-			CreatedAt:     usr.CreatedAt,
+			UserID:                  usr.ID,
+			Name:                    usr.Name,
+			Email:                   usr.Email,
+			Roles:                   usr.RoleSlice(),
+			IsActive:                usr.IsActive,
+			EmailVerifiedAt:         usr.EmailVerifiedAt,
+			AdminVerificationStatus: studentStatus(usr.Student),
+			AdminVerifiedAt:         studentVerifiedAt(usr.Student),
+			RejectionReason:         studentRejection(usr.Student),
+			CreatedAt:               usr.CreatedAt,
 		})
+		if usr.Student != nil {
+			result[len(result)-1].StudentID = &usr.Student.ID
+		}
 	}
 
 	return &Response{
@@ -218,104 +200,170 @@ func (s *Service) GetAllUsers() (*Response, error) {
 	}, nil
 }
 
-func (s *Service) ApproveUser(userID uint) (*Response, error) {
-	user, _, err := s.resolvePendingUser(userID)
+func (s *Service) ApproveStudent(studentID uint, adminID uint) (*Response, error) {
+	student, err := s.resolvePendingStudent(studentID)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.Repo.VerifyUser(s.Repo.DB, userID); err != nil {
-		log.Printf("error memverifikasi user %d: %v", userID, err)
-		return nil, errs.InternalServerError("gagal memverifikasi user")
+	if err := s.Repo.UpdateStudentAdminVerification(s.Repo.DB, student.ID, "approved", &adminID, ""); err != nil {
+		log.Printf("error approve student %d: %v", studentID, err)
+		return nil, errs.InternalServerError("gagal menyetujui mahasiswa")
 	}
 
-	if user.Student != nil && user.Student.KredensialPath != "" {
-		if err := os.Remove(user.Student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", user.Student.KredensialPath, err)
+	if student.KredensialPath != "" {
+		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
 		}
-		if err := s.Repo.ClearStudentKredensial(s.Repo.DB, user.Student.ID); err != nil {
-			log.Printf("error membersihkan path kredensial mahasiswa user %d: %v", userID, err)
+		if err := s.Repo.ClearStudentKredensial(s.Repo.DB, student.ID); err != nil {
+			log.Printf("error membersihkan path kredensial mahasiswa %d: %v", studentID, err)
 		}
 	}
 
 	return &Response{
 		StatusCode: http.StatusOK,
-		Message:    "Data berhasil diverifikasi dan akun telah diaktifkan",
+		Message:    "Mahasiswa berhasil disetujui oleh admin",
 	}, nil
 }
 
-func (s *Service) RejectUser(userID uint) (*Response, error) {
-	user, _, err := s.resolvePendingUser(userID)
+func (s *Service) RejectStudent(studentID uint, adminID uint, reason string) (*Response, error) {
+	student, err := s.resolvePendingStudent(studentID)
 	if err != nil {
 		return nil, err
 	}
 
-	if user.Student != nil && user.Student.KredensialPath != "" {
-		if err := os.Remove(user.Student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", user.Student.KredensialPath, err)
+	if err := s.Repo.UpdateStudentAdminVerification(s.Repo.DB, student.ID, "rejected", &adminID, strings.TrimSpace(reason)); err != nil {
+		log.Printf("error reject student %d: %v", studentID, err)
+		return nil, errs.InternalServerError("gagal menolak mahasiswa")
+	}
+
+	if student.KredensialPath != "" {
+		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
 			return nil, errs.InternalServerError("gagal menghapus file kredensial mahasiswa")
 		}
 	}
 
-	if err := s.Repo.DeleteUser(s.Repo.DB, userID); err != nil {
-		log.Printf("error menolak pendaftaran user %d: %v", userID, err)
-		return nil, errs.InternalServerError("gagal menolak pendaftaran user")
-	}
-
 	return &Response{
 		StatusCode: http.StatusOK,
-		Message:    "Pendaftaran user berhasil ditolak",
+		Message:    "Mahasiswa berhasil ditolak oleh admin",
 	}, nil
 }
 
-func extractUserIDs(users []migration.User) []uint {
-	ids := make([]uint, 0, len(users))
-	for _, usr := range users {
-		ids = append(ids, usr.ID)
+func (s *Service) GetMe(userID uint) (*Response, error) {
+	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		return nil, errs.NotFound("user tidak ditemukan")
 	}
-	return ids
+
+	resp := MeResponse{
+		UserID:          usr.ID,
+		Name:            usr.Name,
+		Email:           usr.Email,
+		Roles:           usr.RoleSlice(),
+		IsActive:        usr.IsActive,
+		EmailVerifiedAt: usr.EmailVerifiedAt,
+	}
+
+	if usr.Student != nil {
+		resp.StudentID = &usr.Student.ID
+		resp.NIM = usr.Student.NIM
+		resp.ProgramStudi = usr.Student.ProgramStudi
+		resp.AdminVerificationStatus = usr.Student.AdminVerificationStatus
+		resp.AdminVerifiedAt = usr.Student.AdminVerifiedAt
+		resp.RejectionReason = usr.Student.RejectionReason
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diambil", Data: resp}, nil
 }
 
-func (s *Service) loadOfficialMap(userIDs []uint) (map[uint]migration.Official, error) {
-	officials, err := s.Repo.GetOfficialsByUserIDs(s.Repo.DB, userIDs)
+func (s *Service) VerifyEmail(req VerifyEmailRequest) (*Response, error) {
+	userID, email, err := token.ValidateEmailVerificationToken(req.Token)
 	if err != nil {
-		return nil, err
+		return nil, errs.BadRequest("Token verifikasi tidak valid")
 	}
 
-	officialMap := make(map[uint]migration.Official, len(officials))
-	for _, official := range officials {
-		officialMap[official.UserID] = official
+	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		return nil, errs.NotFound("user tidak ditemukan")
+	}
+	if !strings.EqualFold(strings.TrimSpace(usr.Email), strings.TrimSpace(email)) {
+		return nil, errs.BadRequest("Token verifikasi tidak sesuai")
+	}
+	if usr.EmailVerifiedAt != nil {
+		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
 	}
 
-	return officialMap, nil
+	now := time.Now()
+	if err := s.Repo.SetUserEmailVerified(s.Repo.DB, usr.ID, now); err != nil {
+		log.Printf("error verifying email for user %d: %v", usr.ID, err)
+		return nil, errs.InternalServerError("Gagal memverifikasi email")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Email berhasil diverifikasi"}, nil
 }
 
-func (s *Service) resolvePendingUser(userID uint) (*migration.User, *migration.Official, error) {
-	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Response, error) {
+	usr, err := s.Repo.GetByEmail(strings.TrimSpace(req.Email))
 	if err != nil {
-		return nil, nil, errs.NotFound("user tidak ditemukan")
+		return nil, errs.NotFound("user tidak ditemukan")
 	}
 
-	if user.Verified {
-		return nil, nil, errs.BadRequest("user sudah diverifikasi")
+	if usr.EmailVerifiedAt != nil {
+		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
 	}
 
-	officialMap, err := s.loadOfficialMap([]uint{userID})
+	if err := helpers.SendVerificationEmail(usr.ID, usr.Email, usr.Name); err != nil {
+		log.Printf("error resend verification email: %v", err)
+		return nil, errs.InternalServerError("Gagal mengirim ulang email verifikasi")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Email verifikasi berhasil dikirim ulang"}, nil
+}
+
+func (s *Service) CreateOfficial(adminID uint, req CreateOfficialRequest) (*Response, error) {
+	if _, err := s.Repo.GetByEmail(req.Email); err == nil {
+		return nil, errs.BadRequest("Email sudah terdaftar")
+	}
+
+	hashedPwd, err := helpers.HashPassword(req.Password)
 	if err != nil {
-		log.Printf("error mengambil data official user %d: %v", userID, err)
-		return nil, nil, errs.InternalServerError("gagal mengambil data user")
+		return nil, errs.InternalServerError("gagal memproses password")
 	}
 
-	official := (*migration.Official)(nil)
-	if foundOfficial, exists := officialMap[userID]; exists {
-		official = &foundOfficial
+	role, err := s.Repo.GetRoleByCode(s.Repo.DB, req.RoleCode)
+	if err != nil {
+		return nil, errs.BadRequest("Role official tidak ditemukan")
 	}
 
-	if user.Student == nil && official == nil {
-		return nil, nil, errs.BadRequest("user bukan mahasiswa atau official")
+	user := &migration.User{
+		Name:     req.Name,
+		Email:    req.Email,
+		Password: hashedPwd,
+		Roles:    []migration.Role{*role},
+		IsActive: true,
 	}
 
-	return user, official, nil
+	official := &migration.Official{
+		NIP:       req.NIP,
+		Pangkat:   req.Pangkat,
+		Jabatan:   req.Jabatan,
+		Signature: req.Signature,
+		IsOnDuty:  true,
+	}
+
+	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
+		return s.Repo.CreateOfficialWithUser(tx, user, official)
+	}); err != nil {
+		log.Printf("error creating official by admin %d: %v", adminID, err)
+		return nil, errs.InternalServerError("gagal membuat akun official")
+	}
+
+	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
+		log.Printf("error sending official verification email: %v", err)
+	}
+
+	return &Response{StatusCode: http.StatusCreated, Message: "Official berhasil dibuat. Silakan verifikasi email official."}, nil
 }
 
 // RegisterWithKRS registers a new student by extracting their data automatically
@@ -385,14 +433,15 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		Name:     krsData.Name,
 		Email:    payload.Email,
 		Password: hashedPwd,
-		Verified: false,
 		Roles:    []migration.Role{*mahasiswaRole},
+		IsActive: true,
 	}
 	student := &migration.Student{
-		NIM:            krsData.NIM,
-		ProgramStudi:   krsData.ProgramStudi,
-		Angkatan:       krsData.Angkatan,
-		KredensialPath: filePath,
+		NIM:                     krsData.NIM,
+		ProgramStudi:            krsData.ProgramStudi,
+		Angkatan:                krsData.Angkatan,
+		KredensialPath:          filePath,
+		AdminVerificationStatus: "pending",
 	}
 
 	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
@@ -401,6 +450,10 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		os.Remove(filePath)
 		log.Printf("error mendaftarkan mahasiswa via KRS: %v", err)
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
+	}
+
+	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
+		log.Printf("error sending verification email for KRS registration: %v", err)
 	}
 
 	return &Response{
@@ -414,4 +467,105 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 			Angkatan:     krsData.Angkatan,
 		},
 	}, nil
+}
+
+// helper functions
+
+func (s *Service) resolvePendingStudent(studentID uint) (*migration.Student, error) {
+	student, err := s.Repo.GetStudentByID(s.Repo.DB, studentID)
+	if err != nil {
+		return nil, errs.NotFound("mahasiswa tidak ditemukan")
+	}
+
+	if strings.ToLower(strings.TrimSpace(student.AdminVerificationStatus)) != "pending" {
+		return nil, errs.BadRequest("mahasiswa tidak dalam status pending")
+	}
+
+	return student, nil
+}
+
+func (s *Service) ensureLoginEligibility(user *migration.User) error {
+	if user == nil {
+		return errs.Unauthorized("Akun tidak valid")
+	}
+
+	if !user.IsActive {
+		return errs.Unauthorized("Akun Anda tidak aktif")
+	}
+
+	if user.EmailVerifiedAt == nil {
+		return errs.Unauthorized("Email belum diverifikasi. Silakan cek inbox email Anda.")
+	}
+
+	if hasRole(user.Roles, "MAHASISWA") {
+		if user.Student == nil {
+			student, err := s.Repo.GetStudentByUserID(s.Repo.DB, user.ID)
+			if err != nil {
+				return errs.Unauthorized("Data mahasiswa tidak ditemukan")
+			}
+			user.Student = student
+		}
+
+		if strings.ToLower(strings.TrimSpace(user.Student.AdminVerificationStatus)) != "approved" {
+			return errs.Unauthorized("Akun mahasiswa belum disetujui admin")
+		}
+	}
+
+	if hasOfficialRole(user.Roles) {
+		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, user.ID)
+		if err != nil {
+			return errs.InternalServerError("Gagal memvalidasi status official")
+		}
+		if err := policy.CanOfficialAct(user, official); err != nil {
+			return errs.Unauthorized(err.Error())
+		}
+	}
+
+	return nil
+}
+
+func hasRole(roles []migration.Role, code string) bool {
+	for _, role := range roles {
+		if strings.EqualFold(role.Code, code) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOfficialRole(roles []migration.Role) bool {
+	for _, role := range roles {
+		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
+			return true
+		}
+	}
+	return false
+}
+
+func studentStatus(student *migration.Student) string {
+	if student == nil {
+		return ""
+	}
+	return student.AdminVerificationStatus
+}
+
+func studentVerifiedAt(student *migration.Student) *time.Time {
+	if student == nil {
+		return nil
+	}
+	return student.AdminVerifiedAt
+}
+
+func studentRejection(student *migration.Student) string {
+	if student == nil {
+		return ""
+	}
+	return student.RejectionReason
+}
+
+func derefTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
 }

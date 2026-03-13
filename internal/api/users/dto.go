@@ -29,18 +29,19 @@ type TokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type PendingUserResponse struct {
-	UserID       uint      `json:"user_id"`
-	Name         string    `json:"name"`
-	Email        string    `json:"email"`
-	UserType     string    `json:"user_type"`
-	Roles        []string  `json:"roles"`
-	NIM          string    `json:"nim,omitempty"`
-	ProgramStudi string    `json:"program_studi,omitempty"`
-	Kredensial   string    `json:"kredensial,omitempty"`
-	Jabatan      string    `json:"jabatan,omitempty"`
-	NIP          string    `json:"nip,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+type PendingStudentResponse struct {
+	StudentID               uint      `json:"student_id"`
+	UserID                  uint      `json:"user_id"`
+	Name                    string    `json:"name"`
+	Email                   string    `json:"email"`
+	NIM                     string    `json:"nim"`
+	ProgramStudi            string    `json:"program_studi"`
+	Kredensial              string    `json:"kredensial,omitempty"`
+	AdminVerificationStatus string    `json:"admin_verification_status"`
+	AdminVerifiedAt         time.Time `json:"admin_verified_at,omitempty"`
+	RejectionReason         string    `json:"rejection_reason,omitempty"`
+	EmailVerifiedAt         time.Time `json:"email_verified_at,omitempty"`
+	CreatedAt               time.Time `json:"created_at"`
 }
 
 // RegisterWithKRSRequest is received as multipart/form-data.
@@ -61,11 +62,53 @@ type KRSPreviewResponse struct {
 }
 
 type UserListResponse struct {
-	UserID        uint      `json:"user_id"`
-	Name          string    `json:"name"`
-	Email         string    `json:"email"`
-	Roles         []string  `json:"roles"`
-	Verified      bool      `json:"verified"`
-	EmailVerified bool      `json:"email_verified"`
-	CreatedAt     time.Time `json:"created_at"`
+	UserID                  uint       `json:"user_id"`
+	Name                    string     `json:"name"`
+	Email                   string     `json:"email"`
+	Roles                   []string   `json:"roles"`
+	IsActive                bool       `json:"is_active"`
+	EmailVerifiedAt         *time.Time `json:"email_verified_at"`
+	StudentID               *uint      `json:"student_id,omitempty"`
+	AdminVerificationStatus string     `json:"admin_verification_status,omitempty"`
+	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
+	RejectionReason         string     `json:"rejection_reason,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+}
+
+type RejectStudentRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+type VerifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+type ResendVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type MeResponse struct {
+	UserID                  uint       `json:"user_id"`
+	Name                    string     `json:"name"`
+	Email                   string     `json:"email"`
+	Roles                   []string   `json:"roles"`
+	IsActive                bool       `json:"is_active"`
+	EmailVerifiedAt         *time.Time `json:"email_verified_at"`
+	StudentID               *uint      `json:"student_id,omitempty"`
+	NIM                     string     `json:"nim,omitempty"`
+	ProgramStudi            string     `json:"program_studi,omitempty"`
+	AdminVerificationStatus string     `json:"admin_verification_status,omitempty"`
+	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
+	RejectionReason         string     `json:"rejection_reason,omitempty"`
+}
+
+type CreateOfficialRequest struct {
+	Name      string `json:"name" binding:"required"`
+	Email     string `json:"email" binding:"required,email"`
+	Password  string `json:"password" binding:"required,min=6"`
+	RoleCode  string `json:"role_code" binding:"required,oneof=DEKAN WAKIL_DEKAN"`
+	NIP       string `json:"nip"`
+	Pangkat   string `json:"pangkat"`
+	Jabatan   string `json:"jabatan" binding:"required"`
+	Signature string `json:"signature"`
 }

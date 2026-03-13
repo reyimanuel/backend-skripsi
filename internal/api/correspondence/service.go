@@ -12,6 +12,7 @@ import (
 	user "github.com/reyimanuel/letter-administration/internal/api/users"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -122,6 +123,9 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
 		if err != nil {
 			return errs.Forbidden("Hanya mahasiswa yang dapat mengajukan surat")
+		}
+		if err := policy.CanStudentSubmitLetter(&student.User, student); err != nil {
+			return err
 		}
 
 		template, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID)
@@ -340,6 +344,10 @@ func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.
 	if err != nil {
 		log.Printf("official not found: jabatan=%q err=%v", signedByRole, err)
 		return nil, errs.NotFound("Pejabat dengan jabatan '" + signedByRole + "' tidak ditemukan atau tidak aktif")
+	}
+
+	if err := policy.CanOfficialAct(&official.User, official); err != nil {
+		return nil, err
 	}
 
 	return official, nil

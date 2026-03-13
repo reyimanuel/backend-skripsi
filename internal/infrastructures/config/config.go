@@ -11,27 +11,36 @@ import (
 )
 
 type AppConfigurationMap struct {
-	Port                 int    // Port is the port number that the server will listen to.
-	IsProduction         bool   // IsProduction is a flag that indicates whether the application is running in production mode.
-	DbURI                string // Database connection.
-	AccessTokenLifeTime  int64  // AccessTokenLifeTime is the lifetime of the access token in seconds.
-	RefreshTokenLifeTime int64  // RefreshTokenLifeTime is the lifetime of the refresh token in seconds.
-	PrivateKeyPath       string // Path to the private key file.
-	PublicKeyPath        string // Path to the public key file.
-	BaseURL              string // BaseURL is the base URL of the application, used for generating absolute URLs.
-	// SMTP                   SMTPConfig    // SMTP configuration (legacy)
-	SendGrid      SendGridConfig // SendGrid configuration
-	EmailProvider string         // Which email provider to use: "smtp" or any email provider
-	FrontEndURL   string         // FrontEndURL is the URL of the front-end application.
+	Port                 int            // Port is the port number that the server will listen to.
+	IsProduction         bool           // IsProduction is a flag that indicates whether the application is running in production mode.
+	DbURI                string         // Database connection.
+	AccessTokenLifeTime  int64          // AccessTokenLifeTime is the lifetime of the access token in seconds.
+	RefreshTokenLifeTime int64          // RefreshTokenLifeTime is the lifetime of the refresh token in seconds.
+	PrivateKeyPath       string         // Path to the private key file.
+	PublicKeyPath        string         // Path to the public key file.
+	BaseURL              string         // BaseURL is the base URL of the application, used for generating absolute URLs.
+	SMTP                 SMTPConfig     // SMTP configuration
+	SendGrid             SendGridConfig // SendGrid configuration
+	EmailProvider        string         // Which email provider to use: "smtp" or any email provider
+	FrontEndURL          string         // FrontEndURL is the URL of the front-end application.
 }
 
-// SMTP configuration
-// type SMTPConfig struct {
-// 	Host string
-// 	Port string
-// 	User string
-// 	Pass string
-// }
+// SMTPConfig holds SMTP configuration.
+// Environment variables:
+// - SMTP_HOST
+// - SMTP_PORT
+// - SMTP_USER
+// - SMTP_PASS
+// - SMTP_SENDER_EMAIL (optional; defaults to SMTP_USER)
+// - SMTP_SENDER_NAME (optional)
+type SMTPConfig struct {
+	Host        string
+	Port        string
+	User        string
+	Pass        string
+	SenderEmail string
+	SenderName  string
+}
 
 // SendGridConfig holds SendGrid configuration
 type SendGridConfig struct {
@@ -94,12 +103,14 @@ func Load() {
 		BaseURL = fmt.Sprintf("http://localhost:%d", port)
 	}
 
-	// smtp := SMTPConfig{
-	// 	Host: os.Getenv("SMTP_HOST"),
-	// 	Port: os.Getenv("SMTP_PORT"),
-	// 	User: os.Getenv("SMTP_USER"),
-	// 	Pass: os.Getenv("SMTP_PASS"),
-	// }
+	SMTP := SMTPConfig{
+		Host:        os.Getenv("SMTP_HOST"),
+		Port:        os.Getenv("SMTP_PORT"),
+		User:        os.Getenv("SMTP_USER"),
+		Pass:        os.Getenv("SMTP_PASS"),
+		SenderEmail: os.Getenv("SMTP_SENDER_EMAIL"),
+		SenderName:  os.Getenv("SMTP_SENDER_NAME"),
+	}
 
 	// SendGrid Configuration
 	SendGrid := SendGridConfig{
@@ -111,7 +122,7 @@ func Load() {
 	// Email provider selection (default to SMTP for backward compatibility)
 	EmailProvider := os.Getenv("EMAIL_PROVIDER")
 	if EmailProvider == "" {
-		fmt.Printf("No Provider Found")
+		EmailProvider = "smtp"
 	}
 
 	FrontEndURL := os.Getenv("FRONTEND_URL")
@@ -129,10 +140,10 @@ func Load() {
 		PrivateKeyPath:       PrivateKeyPath,
 		PublicKeyPath:        PublicKeyPath,
 		BaseURL:              BaseURL,
-		// SMTP:                   SMTP,
-		SendGrid:      SendGrid,
-		EmailProvider: EmailProvider,
-		FrontEndURL:   FrontEndURL,
+		SMTP:                 SMTP,
+		SendGrid:             SendGrid,
+		EmailProvider:        EmailProvider,
+		FrontEndURL:          FrontEndURL,
 	}
 }
 

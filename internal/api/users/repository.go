@@ -3,6 +3,7 @@ package user
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
@@ -18,7 +19,7 @@ func NewRepository(db *gorm.DB) *Repository {
 
 func (r *Repository) GetByEmail(email string) (*migration.User, error) {
 	var user migration.User
-	if err := r.DB.Preload("Roles").Where("email = ?", email).First(&user).Error; err != nil {
+	if err := r.DB.Preload("Roles").Preload("Student").Where("email = ?", email).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil
@@ -97,38 +98,43 @@ func (r *Repository) CreateStudentWithUser(tx *gorm.DB, user *migration.User, st
 	return tx.Create(student).Error
 }
 
+func (r *Repository) CreateOfficialWithUser(tx *gorm.DB, user *migration.User, official *migration.Official) error {
+	if err := tx.Create(user).Error; err != nil {
+		return err
+	}
+
+	official.UserID = user.ID
+	return tx.Create(official).Error
+}
+
 func baseUserQuery(tx *gorm.DB) *gorm.DB {
 	return tx.Model(&migration.User{}).
 		Preload("Roles").
 		Preload("Student")
 }
 
-func (r *Repository) GetPendingUsers(tx *gorm.DB) ([]migration.User, error) {
-	var users []migration.User
-	err := baseUserQuery(tx).
-		Joins("LEFT JOIN students ON students.user_id = users.id").
-		Joins("LEFT JOIN officials ON officials.user_id = users.id").
-		Where("users.verified = ?", false).
-		Where("students.id IS NOT NULL OR officials.id IS NOT NULL").
-		Distinct("users.id").
-		Order("users.created_at DESC").
-		Find(&users).Error
-
-	return users, err
+func (r *Repository) GetPendingStudents(tx *gorm.DB) ([]migration.Student, error) {
+	var students []migration.Student
+	err := tx.Preload("User").
+		Where("admin_verification_status = ?", "pending").
+		Order("created_at DESC").
+		Find(&students).Error
+	return students, err
 }
 
-func (r *Repository) GetOfficialsByUserIDs(tx *gorm.DB, userIDs []uint) ([]migration.Official, error) {
-	if len(userIDs) == 0 {
-		return []migration.Official{}, nil
+func (r *Repository) UpdateStudentAdminVerification(tx *gorm.DB, studentID uint, status string, adminID *uint, reason string) error {
+	updates := map[string]any{
+		"admin_verification_status": status,
+		"admin_verified_by":         adminID,
+		"admin_verified_at":         time.Now(),
+		"rejection_reason":          reason,
 	}
 
-	var officials []migration.Official
-	err := tx.Where("user_id IN ?", userIDs).Find(&officials).Error
-	return officials, err
+	return tx.Model(&migration.Student{}).Where("id = ?", studentID).Updates(updates).Error
 }
 
-func (r *Repository) VerifyUser(tx *gorm.DB, userID uint) error {
-	return tx.Model(&migration.User{}).Where("id = ?", userID).Update("Verified", true).Error
+func (r *Repository) SetUserEmailVerified(tx *gorm.DB, userID uint, verifiedAt time.Time) error {
+	return tx.Model(&migration.User{}).Where("id = ?", userID).Update("email_verified_at", verifiedAt).Error
 }
 
 func (r *Repository) ClearStudentKredensial(tx *gorm.DB, studentID uint) error {
@@ -145,4 +151,16 @@ func (r *Repository) GetAllUsers(tx *gorm.DB) ([]migration.User, error) {
 		Order("users.created_at DESC").
 		Find(&users).Error
 	return users, err
+}
+
+func (r *Repository) GetOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
+	var official migration.Official
+	if err := tx.Preload("User").Where("user_id = ?", userID).First(&official).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &official, nil
 }
