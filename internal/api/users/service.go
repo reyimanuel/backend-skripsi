@@ -137,48 +137,104 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 	}, nil
 }
 
-func (s *Service) GetPendingStudents() (*Response, error) {
-	students, err := s.Repo.GetPendingStudents(s.Repo.DB)
+func (s *Service) GetPendingUsers() (*Response, error) {
+	users, err := s.Repo.GetPendingUsers(s.Repo.DB)
 	if err != nil {
-		log.Printf("error mengambil pending students: %v", err)
-		return nil, errs.InternalServerError("gagal mengambil data mahasiswa pending")
+		log.Printf("error mengambil pending users: %v", err)
+		return nil, errs.InternalServerError("gagal mengambil data user pending")
 	}
 
-	result := make([]PendingStudentResponse, 0, len(students))
-	for _, st := range students {
-		result = append(result, PendingStudentResponse{
-			UserID:     st.UserID,
-			Name:       st.User.Name,
-			Email:      st.User.Email,
-			NIM:        st.NIM,
-			Kredensial: st.KredensialPath,
+	officialMap, err := s.loadOfficialMap(extractUserIDs(users))
+	if err != nil {
+		log.Printf("error mengambil data official pending: %v", err)
+		return nil, errs.InternalServerError("gagal mengambil data user pending")
+	}
+
+	result := make([]PendingUserResponse, 0, len(users))
+	for _, usr := range users {
+		item := PendingUserResponse{
+			UserID:    usr.ID,
+			Name:      usr.Name,
+			Email:     usr.Email,
+			Roles:     usr.RoleSlice(),
+			CreatedAt: usr.CreatedAt,
+		}
+
+		if usr.Student != nil {
+			item.UserType = "student"
+			item.NIM = usr.Student.NIM
+			item.ProgramStudi = usr.Student.ProgramStudi
+			item.Kredensial = usr.Student.KredensialPath
+		} else if official, exists := officialMap[usr.ID]; exists {
+			item.UserType = "official"
+			item.Jabatan = official.Jabatan
+			item.NIP = official.NIP
+		} else {
+			item.UserType = "user"
+		}
+
+		result = append(result, item)
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "Data user pending berhasil diambil",
+		Data:       result,
+	}, nil
+}
+
+func (s *Service) GetAllUsers() (*Response, error) {
+	users, err := s.Repo.GetAllUsers(s.Repo.DB)
+	if err != nil {
+		log.Printf("error mengambil semua users: %v", err)
+		return nil, errs.InternalServerError("gagal mengambil data users")
+	}
+
+	result := make([]UserListResponse, 0, len(users))
+	for _, usr := range users {
+		emailVerified := false
+		for _, role := range usr.Roles {
+			if role.Code == "MAHASISWA" && usr.Student != nil {
+				emailVerified = usr.Student.EmailVerified
+				break
+			}
+		}
+
+		result = append(result, UserListResponse{
+			UserID:        usr.ID,
+			Name:          usr.Name,
+			Email:         usr.Email,
+			Roles:         usr.RoleSlice(),
+			Verified:      usr.Verified,
+			EmailVerified: emailVerified,
+			CreatedAt:     usr.CreatedAt,
 		})
 	}
 
 	return &Response{
 		StatusCode: http.StatusOK,
-		Message:    "Data mahasiswa pending berhasil diambil",
+		Message:    "Data users berhasil diambil",
 		Data:       result,
 	}, nil
 }
 
-func (s *Service) ApproveStudent(studentID uint) (*Response, error) {
-	student, err := s.Repo.GetStudentByID(s.Repo.DB, studentID)
+func (s *Service) ApproveUser(userID uint) (*Response, error) {
+	user, _, err := s.resolvePendingUser(userID)
 	if err != nil {
-		return nil, errs.NotFound("mahasiswa tidak ditemukan")
+		return nil, err
 	}
 
-	if err := s.Repo.VerifyUser(s.Repo.DB, student.UserID); err != nil {
-		log.Printf("error mengaktifkan akun mahasiswa %d: %v", studentID, err)
-		return nil, errs.InternalServerError("gagal mengaktifkan akun mahasiswa")
+	if err := s.Repo.VerifyUser(s.Repo.DB, userID); err != nil {
+		log.Printf("error memverifikasi user %d: %v", userID, err)
+		return nil, errs.InternalServerError("gagal memverifikasi user")
 	}
 
-	if student.KredensialPath != "" {
-		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
+	if user.Student != nil && user.Student.KredensialPath != "" {
+		if err := os.Remove(user.Student.KredensialPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file kredensial %s: %v", user.Student.KredensialPath, err)
 		}
-		if err := s.Repo.ClearStudentKredensial(s.Repo.DB, studentID); err != nil {
-			log.Printf("error membersihkan path kredensial mahasiswa %d: %v", studentID, err)
+		if err := s.Repo.ClearStudentKredensial(s.Repo.DB, user.Student.ID); err != nil {
+			log.Printf("error membersihkan path kredensial mahasiswa user %d: %v", userID, err)
 		}
 	}
 
@@ -188,28 +244,78 @@ func (s *Service) ApproveStudent(studentID uint) (*Response, error) {
 	}, nil
 }
 
-func (s *Service) RejectStudent(studentID uint) (*Response, error) {
-	student, err := s.Repo.GetStudentByID(s.Repo.DB, studentID)
+func (s *Service) RejectUser(userID uint) (*Response, error) {
+	user, _, err := s.resolvePendingUser(userID)
 	if err != nil {
-		return nil, errs.NotFound("mahasiswa tidak ditemukan")
+		return nil, err
 	}
 
-	if student.KredensialPath != "" {
-		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
+	if user.Student != nil && user.Student.KredensialPath != "" {
+		if err := os.Remove(user.Student.KredensialPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file kredensial %s: %v", user.Student.KredensialPath, err)
 			return nil, errs.InternalServerError("gagal menghapus file kredensial mahasiswa")
 		}
 	}
 
-	if err := s.Repo.DeleteUser(s.Repo.DB, student.UserID); err != nil {
-		log.Printf("error menolak pendaftaran mahasiswa %d: %v", studentID, err)
-		return nil, errs.InternalServerError("gagal menolak pendaftaran mahasiswa")
+	if err := s.Repo.DeleteUser(s.Repo.DB, userID); err != nil {
+		log.Printf("error menolak pendaftaran user %d: %v", userID, err)
+		return nil, errs.InternalServerError("gagal menolak pendaftaran user")
 	}
 
 	return &Response{
 		StatusCode: http.StatusOK,
-		Message:    "Pendaftaran mahasiswa berhasil ditolak",
+		Message:    "Pendaftaran user berhasil ditolak",
 	}, nil
+}
+
+func extractUserIDs(users []migration.User) []uint {
+	ids := make([]uint, 0, len(users))
+	for _, usr := range users {
+		ids = append(ids, usr.ID)
+	}
+	return ids
+}
+
+func (s *Service) loadOfficialMap(userIDs []uint) (map[uint]migration.Official, error) {
+	officials, err := s.Repo.GetOfficialsByUserIDs(s.Repo.DB, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	officialMap := make(map[uint]migration.Official, len(officials))
+	for _, official := range officials {
+		officialMap[official.UserID] = official
+	}
+
+	return officialMap, nil
+}
+
+func (s *Service) resolvePendingUser(userID uint) (*migration.User, *migration.Official, error) {
+	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		return nil, nil, errs.NotFound("user tidak ditemukan")
+	}
+
+	if user.Verified {
+		return nil, nil, errs.BadRequest("user sudah diverifikasi")
+	}
+
+	officialMap, err := s.loadOfficialMap([]uint{userID})
+	if err != nil {
+		log.Printf("error mengambil data official user %d: %v", userID, err)
+		return nil, nil, errs.InternalServerError("gagal mengambil data user")
+	}
+
+	official := (*migration.Official)(nil)
+	if foundOfficial, exists := officialMap[userID]; exists {
+		official = &foundOfficial
+	}
+
+	if user.Student == nil && official == nil {
+		return nil, nil, errs.BadRequest("user bukan mahasiswa atau official")
+	}
+
+	return user, official, nil
 }
 
 // RegisterWithKRS registers a new student by extracting their data automatically

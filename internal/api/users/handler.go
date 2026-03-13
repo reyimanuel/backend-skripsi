@@ -56,8 +56,8 @@ func (h *Handler) RegisterStudent(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) GetPendingStudents(ctx *gin.Context) {
-	response, err := h.Service.GetPendingStudents()
+func (h *Handler) GetPendingUsers(ctx *gin.Context) {
+	response, err := h.Service.GetPendingUsers()
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -66,14 +66,8 @@ func (h *Handler) GetPendingStudents(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) ApproveStudent(ctx *gin.Context) {
-	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
-	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
-		return
-	}
-
-	response, err := h.Service.ApproveStudent(uint(id))
+func (h *Handler) GetAllUsers(ctx *gin.Context) {
+	response, err := h.Service.GetAllUsers()
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -82,14 +76,30 @@ func (h *Handler) ApproveStudent(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) RejectStudent(ctx *gin.Context) {
+func (h *Handler) ApproveUser(ctx *gin.Context) {
 	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
 	if err != nil {
 		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
 		return
 	}
 
-	response, err := h.Service.RejectStudent(uint(id))
+	response, err := h.Service.ApproveUser(uint(id))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) RejectUser(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
+		return
+	}
+
+	response, err := h.Service.RejectUser(uint(id))
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

@@ -19,8 +19,9 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	// Admin-only routes
 	admin := r.Group("/", middleware.MiddlewareAuth, middleware.MiddlewareRole("ADMIN"))
 	{
-		admin.GET("/pending", handler.GetPendingStudents)
-		admin.POST("/approve/:id", handler.ApproveStudent)
-		admin.DELETE("/reject/:id", handler.RejectStudent)
+		admin.GET("/all", handler.GetAllUsers)
+		admin.GET("/pending", handler.GetPendingUsers)
+		admin.POST("/approve/:id", handler.ApproveUser)
+		admin.DELETE("/reject/:id", handler.RejectUser)
 	}
 }

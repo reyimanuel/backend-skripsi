@@ -1,5 +1,7 @@
 package user
 
+import "time"
+
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
@@ -27,12 +29,18 @@ type TokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type PendingStudentResponse struct {
-	UserID     uint   `json:"user_id"`
-	Name       string `json:"name"`
-	Email      string `json:"email"`
-	NIM        string `json:"nim"`
-	Kredensial string `json:"kredensial"`
+type PendingUserResponse struct {
+	UserID       uint      `json:"user_id"`
+	Name         string    `json:"name"`
+	Email        string    `json:"email"`
+	UserType     string    `json:"user_type"`
+	Roles        []string  `json:"roles"`
+	NIM          string    `json:"nim,omitempty"`
+	ProgramStudi string    `json:"program_studi,omitempty"`
+	Kredensial   string    `json:"kredensial,omitempty"`
+	Jabatan      string    `json:"jabatan,omitempty"`
+	NIP          string    `json:"nip,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // RegisterWithKRSRequest is received as multipart/form-data.
@@ -50,4 +58,14 @@ type KRSPreviewResponse struct {
 	NIM          string `json:"nim"`
 	ProgramStudi string `json:"program_studi"`
 	Angkatan     int    `json:"angkatan"`
+}
+
+type UserListResponse struct {
+	UserID        uint      `json:"user_id"`
+	Name          string    `json:"name"`
+	Email         string    `json:"email"`
+	Roles         []string  `json:"roles"`
+	Verified      bool      `json:"verified"`
+	EmailVerified bool      `json:"email_verified"`
+	CreatedAt     time.Time `json:"created_at"`
 }

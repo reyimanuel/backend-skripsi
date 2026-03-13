@@ -329,6 +329,8 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 	}, nil
 }
 
+// private helpers
+
 func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.Official, error) {
 	if signedByRole == "" {
 		return nil, errs.BadRequest("Penandatangan wajib dipilih")

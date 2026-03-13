@@ -24,6 +24,14 @@ func (r *Repository) GetByEmail(email string) (*migration.User, error) {
 	return &user, nil
 }
 
+func (r *Repository) GetUserByID(tx *gorm.DB, userID uint) (*migration.User, error) {
+	var user migration.User
+	if err := tx.Preload("Roles").Preload("Student").Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *Repository) GetStudentByUserID(tx *gorm.DB, userID uint) (*migration.Student, error) {
 	var student migration.Student
 	if err := tx.Preload("User").Where("user_id = ?", userID).First(&student).Error; err != nil {
@@ -89,13 +97,34 @@ func (r *Repository) CreateStudentWithUser(tx *gorm.DB, user *migration.User, st
 	return tx.Create(student).Error
 }
 
-func (r *Repository) GetPendingStudents(tx *gorm.DB) ([]migration.Student, error) {
-	var students []migration.Student
-	err := tx.Preload("User").
-		Joins("JOIN users ON users.id = students.user_id").
+func baseUserQuery(tx *gorm.DB) *gorm.DB {
+	return tx.Model(&migration.User{}).
+		Preload("Roles").
+		Preload("Student")
+}
+
+func (r *Repository) GetPendingUsers(tx *gorm.DB) ([]migration.User, error) {
+	var users []migration.User
+	err := baseUserQuery(tx).
+		Joins("LEFT JOIN students ON students.user_id = users.id").
+		Joins("LEFT JOIN officials ON officials.user_id = users.id").
 		Where("users.verified = ?", false).
-		Find(&students).Error
-	return students, err
+		Where("students.id IS NOT NULL OR officials.id IS NOT NULL").
+		Distinct("users.id").
+		Order("users.created_at DESC").
+		Find(&users).Error
+
+	return users, err
+}
+
+func (r *Repository) GetOfficialsByUserIDs(tx *gorm.DB, userIDs []uint) ([]migration.Official, error) {
+	if len(userIDs) == 0 {
+		return []migration.Official{}, nil
+	}
+
+	var officials []migration.Official
+	err := tx.Where("user_id IN ?", userIDs).Find(&officials).Error
+	return officials, err
 }
 
 func (r *Repository) VerifyUser(tx *gorm.DB, userID uint) error {
@@ -108,4 +137,12 @@ func (r *Repository) ClearStudentKredensial(tx *gorm.DB, studentID uint) error {
 
 func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
 	return tx.Delete(&migration.User{}, userID).Error
+}
+
+func (r *Repository) GetAllUsers(tx *gorm.DB) ([]migration.User, error) {
+	var users []migration.User
+	err := baseUserQuery(tx).
+		Order("users.created_at DESC").
+		Find(&users).Error
+	return users, err
 }
