@@ -1,6 +1,7 @@
 package user
 
 import (
+	"errors"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
@@ -208,30 +210,74 @@ func (s *Service) GetAllUsers() (*Response, error) {
 	}, nil
 }
 
-func (s *Service) ApproveStudent(studentID uint, adminID uint) (*Response, error) {
-	student, err := s.resolvePendingStudent(studentID)
+func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStudentRequest) (*Response, error) {
+	var kredensialPath string
+
+	err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
+		student, err := s.resolvePendingStudentTx(tx, studentID)
+		if err != nil {
+			return err
+		}
+		kredensialPath = student.KredensialPath
+
+		userUpdates := map[string]any{}
+		studentUpdates := map[string]any{}
+
+		if req != nil {
+			if name := strings.TrimSpace(req.Name); name != "" {
+				userUpdates["name"] = name
+			}
+			if nim := strings.TrimSpace(req.NIM); nim != "" {
+				studentUpdates["nim"] = nim
+			}
+			if ps := strings.TrimSpace(req.ProgramStudi); ps != "" {
+				studentUpdates["program_studi"] = ps
+			}
+			if req.Angkatan != nil {
+				studentUpdates["angkatan"] = *req.Angkatan
+			}
+		}
+
+		if err := s.Repo.UpdateUserFields(tx, student.UserID, userUpdates); err != nil {
+			log.Printf("error updating user fields for student %d: %v", studentID, err)
+			return errs.InternalServerError("gagal memperbarui data mahasiswa")
+		}
+
+		if err := s.Repo.UpdateStudentFields(tx, student.ID, studentUpdates); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return errs.BadRequest("NIM sudah terdaftar")
+			}
+			log.Printf("error updating student fields %d: %v", studentID, err)
+			return errs.InternalServerError("gagal memperbarui data mahasiswa")
+		}
+
+		if err := s.Repo.UpdateStudentAdminVerification(tx, student.ID, "approved", &adminID, ""); err != nil {
+			log.Printf("error approve student %d: %v", studentID, err)
+			return errs.InternalServerError("gagal menyetujui mahasiswa")
+		}
+
+		if kredensialPath != "" {
+			if err := s.Repo.ClearStudentKredensial(tx, student.ID); err != nil {
+				log.Printf("error membersihkan path kredensial mahasiswa %d: %v", studentID, err)
+				return errs.InternalServerError("gagal memproses persetujuan mahasiswa")
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.Repo.UpdateStudentAdminVerification(s.Repo.DB, student.ID, "approved", &adminID, ""); err != nil {
-		log.Printf("error approve student %d: %v", studentID, err)
-		return nil, errs.InternalServerError("gagal menyetujui mahasiswa")
-	}
-
-	if student.KredensialPath != "" {
-		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
-		}
-		if err := s.Repo.ClearStudentKredensial(s.Repo.DB, student.ID); err != nil {
-			log.Printf("error membersihkan path kredensial mahasiswa %d: %v", studentID, err)
+	if kredensialPath != "" {
+		if err := os.Remove(kredensialPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("gagal menghapus file kredensial %s: %v", kredensialPath, err)
 		}
 	}
 
-	return &Response{
-		StatusCode: http.StatusOK,
-		Message:    "Mahasiswa berhasil disetujui oleh admin",
-	}, nil
+	return &Response{StatusCode: http.StatusOK, Message: "Mahasiswa berhasil disetujui oleh admin"}, nil
 }
 
 func (s *Service) RejectStudent(studentID uint, adminID uint, reason string) (*Response, error) {
@@ -538,8 +584,8 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 
 // helper functions
 
-func (s *Service) resolvePendingStudent(studentID uint) (*migration.Student, error) {
-	student, err := s.Repo.GetStudentByID(s.Repo.DB, studentID)
+func (s *Service) resolvePendingStudentTx(tx *gorm.DB, studentID uint) (*migration.Student, error) {
+	student, err := s.Repo.GetStudentByID(tx, studentID)
 	if err != nil {
 		return nil, errs.NotFound("mahasiswa tidak ditemukan")
 	}
@@ -549,6 +595,10 @@ func (s *Service) resolvePendingStudent(studentID uint) (*migration.Student, err
 	}
 
 	return student, nil
+}
+
+func (s *Service) resolvePendingStudent(studentID uint) (*migration.Student, error) {
+	return s.resolvePendingStudentTx(s.Repo.DB, studentID)
 }
 
 func (s *Service) ensureLoginEligibility(user *migration.User) error {

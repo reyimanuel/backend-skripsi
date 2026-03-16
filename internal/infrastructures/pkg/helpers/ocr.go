@@ -42,6 +42,7 @@ func ExtractTextFromImage(imagePath string) (string, error) {
 
 	seen := make(map[string]struct{}, len(configs))
 	candidates := make([]string, 0, len(configs))
+	parseableCandidates := make([]string, 0, len(configs))
 	var failures []string
 
 	for _, cfg := range configs {
@@ -62,8 +63,12 @@ func ExtractTextFromImage(imagePath string) (string, error) {
 		candidates = append(candidates, normalized)
 
 		if _, err := ParseKRSData(normalized); err == nil {
-			return normalized, nil
+			parseableCandidates = append(parseableCandidates, normalized)
 		}
+	}
+
+	if len(parseableCandidates) > 0 {
+		return chooseBestOCRText(parseableCandidates), nil
 	}
 
 	if len(candidates) == 0 {
@@ -128,27 +133,30 @@ func ParseKRSData(rawText string) (*KRSData, error) {
 	nameLabeled := regexp.MustCompile(`(?im)(?:Nama\s+Mahasiswa|Nama)\s*(?:[:\t]|\s{1,3})\s*([^\n\r:]+)`)
 	if m := nameLabeled.FindStringSubmatch(normalizedText); len(m) > 1 {
 		name := strings.TrimSpace(m[1])
-		trailingLabel := regexp.MustCompile(`(?i)\s+(?:NIM|Program|Prodi|Semester|Angkatan|Fakultas|Jurusan|FOTO).*$`)
+		trailingLabel := regexp.MustCompile(`(?i)\s+(?:NIM|Nomor\s+Induk\s+Mahasiswa|Nomor|Program|Prodi|Semester|Angkatan|Fakultas|Jurusan|Pembimbing|IP\s+Semester|Beban\s+SKS|FOTO).*$`)
 		data.Name = cleanStudentName(trailingLabel.ReplaceAllString(name, ""))
 	}
 
-	// Fallback: in the signature section the student name appears on the line
-	// immediately before the standalone NIM line.
-	if data.Name == "" && data.NIM != "" {
-		allCaps := regexp.MustCompile(`^[A-Z][A-Z\s\.\,\-]+$`)
-		for i, line := range lines {
-			if strings.TrimSpace(line) == data.NIM && i > 0 {
-				for j := i - 1; j >= 0; j-- {
-					candidate := strings.TrimSpace(lines[j])
-					if candidate == "" {
-						continue
-					}
-					if allCaps.MatchString(candidate) {
-						data.Name = cleanStudentName(candidate)
-					}
-					break
-				}
-				break
+	if data.Name == "" {
+		data.Name = extractNameFromMultilineLabel(lines)
+	}
+
+	// Fallback/override dari signature section.
+	// Tetap dicoba saat nama kosong ATAU kualitas nama rendah
+	// (mis. ada kata yang tergabung karena OCR).
+	if data.NIM != "" && shouldTrySignatureOverride(data.Name) {
+		if sigName := inferNameFromSignature(lines, data.NIM); sigName != "" {
+			// pakai nama signature jika lebih baik
+			if scoreNameQuality(sigName) >= scoreNameQuality(data.Name) {
+				data.Name = sigName
+			}
+		}
+	}
+
+	if shouldTrySignatureOverride(data.Name) {
+		if refined := inferNameFromTextCandidates(normalizedText, data.Name); refined != "" {
+			if scoreNameQuality(refined) > scoreNameQuality(data.Name) {
+				data.Name = refined
 			}
 		}
 	}
@@ -265,6 +273,7 @@ func scoreOCRText(rawText string) int {
 	data, _ := ParseKRSData(text)
 	if data.Name != "" {
 		score += 100
+		score += scoreNameQuality(data.Name)
 	}
 	if data.NIM != "" {
 		score += 180
@@ -322,6 +331,9 @@ func compactDigits(value string) string {
 func cleanProgramStudi(value string) string {
 	cleaned := strings.TrimSpace(value)
 	cleaned = strings.NewReplacer("$1", "S1", "$2", "S2", "$3", "S3").Replace(cleaned)
+	cleaned = regexp.MustCompile(`(?i)^\s*81\s*[-–]\s*`).ReplaceAllString(cleaned, "S1 - ")
+	cleaned = regexp.MustCompile(`(?i)^\s*([123])\s*[-–]\s*`).ReplaceAllString(cleaned, "S$1 - ")
+	cleaned = regexp.MustCompile(`(?i)\bINFORMATICA\b`).ReplaceAllString(cleaned, "INFORMATIKA")
 	cleaned = regexp.MustCompile(`^[^A-Za-z0-9]+`).ReplaceAllString(cleaned, "")
 	return cleaned
 }
@@ -331,4 +343,240 @@ func cleanStudentName(value string) string {
 	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
 	cleaned = strings.Trim(cleaned, " .,:;\"'")
 	return strings.TrimSpace(cleaned)
+}
+
+func inferNameFromSignature(lines []string, nim string) string {
+	allCaps := regexp.MustCompile(`^[A-Z][A-Z\s\.\,\-]+$`)
+	bestCandidate := ""
+	bestScore := -999
+
+	for i, line := range lines {
+		if compactDigits(line) == nim && i > 0 {
+			for j := i - 1; j >= 0; j-- {
+				candidate := strings.TrimSpace(lines[j])
+				if candidate == "" {
+					continue
+				}
+				if allCaps.MatchString(candidate) {
+					cleaned := cleanStudentName(candidate)
+					score := scoreNameQuality(cleaned)
+					if score > bestScore {
+						bestScore = score
+						bestCandidate = cleaned
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return bestCandidate
+}
+
+func isSuspiciousSingleTokenName(name string) bool {
+	parts := strings.Fields(strings.TrimSpace(name))
+	return len(parts) == 1 && len(parts[0]) >= 14
+}
+
+func shouldTrySignatureOverride(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return true
+	}
+
+	if isSuspiciousSingleTokenName(name) {
+		return true
+	}
+
+	if hasSuspiciousLongToken(name) {
+		return true
+	}
+
+	return scoreNameQuality(name) < 25
+}
+
+func hasSuspiciousLongToken(name string) bool {
+	for _, part := range strings.Fields(strings.TrimSpace(name)) {
+		if len(part) >= 12 {
+			return true
+		}
+	}
+	return false
+}
+
+func scoreNameQuality(name string) int {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0
+	}
+
+	score := 0
+	parts := strings.Fields(name)
+
+	switch {
+	case len(parts) >= 3:
+		score += 40
+	case len(parts) == 2:
+		score += 25
+	default:
+		score += 5
+	}
+
+	if isSuspiciousSingleTokenName(name) {
+		score -= 20
+	}
+
+	for _, p := range parts {
+		if len(p) >= 12 {
+			score -= 20
+		}
+	}
+
+	// penalti karakter non-huruf yang berlebihan
+	if regexp.MustCompile(`[^A-Za-z\s\.\,\-]`).MatchString(name) {
+		score -= 10
+	}
+
+	return score
+}
+
+func inferNameFromTextCandidates(text, currentName string) string {
+	stopwords := map[string]struct{}{
+		"UNIVERSITAS": {}, "FAKULTAS": {}, "TEKNIK": {}, "KARTU": {}, "RENCANA": {},
+		"STUDI": {}, "SEMESTER": {}, "GENAP": {}, "NAMA": {}, "MAHASISWA": {},
+		"NOMOR": {}, "INDUK": {}, "PROGRAM": {}, "ANGKATAN": {}, "PEMBIMBING": {},
+		"AKADEMIK": {}, "MENGETAHUI": {}, "MENYETUJUI": {}, "WAKIL": {}, "DEKAN": {},
+		"DOSEN": {}, "MANADO": {},
+	}
+
+	currentCompact := strings.ToUpper(strings.ReplaceAll(currentName, " ", ""))
+	best := ""
+	bestScore := -999
+
+	candidateRe := regexp.MustCompile(`\b[A-Z]{2,}(?: [A-Z]{2,}){1,4}\b`)
+	for _, line := range strings.Split(strings.ToUpper(text), "\n") {
+		normalizedLine := strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(line, " "))
+		for _, raw := range candidateRe.FindAllString(normalizedLine, -1) {
+			candidate := cleanStudentName(raw)
+			candidate = regexp.MustCompile(`(?i)^(?:NAMA\s+MAHASISWA|NAMA|MAHASISWA)\s+`).ReplaceAllString(candidate, "")
+			candidate = stripAcademicTitleTokens(candidate)
+			candidate = trimTrailingFieldTokens(candidate)
+			if candidate == "" {
+				continue
+			}
+
+			parts := strings.Fields(candidate)
+			if len(parts) < 2 {
+				continue
+			}
+
+			allStopword := true
+			for _, p := range parts {
+				if _, ok := stopwords[p]; !ok {
+					allStopword = false
+					break
+				}
+			}
+			if allStopword {
+				continue
+			}
+
+			score := scoreNameQuality(candidate)
+			for _, p := range parts {
+				if len(p) >= 3 && strings.Contains(currentCompact, p) {
+					score += 10
+				}
+			}
+
+			if score > bestScore {
+				bestScore = score
+				best = candidate
+			}
+		}
+	}
+
+	if bestScore <= scoreNameQuality(currentName) {
+		return ""
+	}
+
+	return best
+}
+
+func extractNameFromMultilineLabel(lines []string) string {
+	labelOnly := regexp.MustCompile(`(?i)^\s*(?:Nama\s+Mahasiswa|Nama)\s*:?\s*$`)
+	trailingLabel := regexp.MustCompile(`(?i)\s+(?:NIM|Nomor\s+Induk\s+Mahasiswa|Nomor|Program|Prodi|Semester|Angkatan|Fakultas|Jurusan|Pembimbing|IP\s+Semester|Beban\s+SKS|FOTO).*$`)
+
+	for i, line := range lines {
+		if !labelOnly.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+
+		for j := i + 1; j < len(lines); j++ {
+			candidate := strings.TrimSpace(lines[j])
+			if candidate == "" {
+				continue
+			}
+			candidate = cleanStudentName(trailingLabel.ReplaceAllString(candidate, ""))
+			if candidate != "" {
+				return candidate
+			}
+			break
+		}
+	}
+
+	return ""
+}
+
+func stripAcademicTitleTokens(name string) string {
+	titleTokens := map[string]struct{}{
+		"ST": {}, "MT": {}, "MTI": {}, "DR": {}, "IR": {}, "PROF": {},
+	}
+
+	parts := strings.Fields(strings.TrimSpace(name))
+	if len(parts) == 0 {
+		return ""
+	}
+
+	isTitle := func(token string) bool {
+		normalized := strings.ToUpper(strings.Trim(token, " .,:;"))
+		_, ok := titleTokens[normalized]
+		return ok
+	}
+
+	start := 0
+	for start < len(parts) && isTitle(parts[start]) {
+		start++
+	}
+
+	end := len(parts)
+	for end > start && isTitle(parts[end-1]) {
+		end--
+	}
+
+	return cleanStudentName(strings.Join(parts[start:end], " "))
+}
+
+func trimTrailingFieldTokens(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	trailingFieldTokens := map[string]struct{}{
+		"NOMOR": {}, "INDUK": {}, "MAHASISWA": {}, "NIM": {}, "PROGRAM": {}, "STUDI": {},
+		"ANGKATAN": {}, "SEMESTER": {}, "FAKULTAS": {}, "JURUSAN": {}, "PEMBIMBING": {},
+		"AKADEMIK": {}, "BEBAN": {}, "SKS": {},
+	}
+
+	parts := strings.Fields(strings.TrimSpace(name))
+	end := len(parts)
+	for end > 0 {
+		token := strings.ToUpper(strings.Trim(parts[end-1], " .,:;\"'|"))
+		if _, ok := trailingFieldTokens[token]; ok {
+			end--
+			continue
+		}
+		break
+	}
+
+	return cleanStudentName(strings.Join(parts[:end], " "))
 }

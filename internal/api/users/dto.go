@@ -79,6 +79,16 @@ type RejectStudentRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
 
+// ApproveStudentRequest optionally carries corrected student data
+// (e.g., to fix OCR ambiguities based on the uploaded KRS/KTM).
+// If a field is omitted/empty, it will not be updated.
+type ApproveStudentRequest struct {
+	Name         string `json:"name,omitempty"`
+	NIM          string `json:"nim,omitempty"`
+	ProgramStudi string `json:"program_studi,omitempty"`
+	Angkatan     *int   `json:"angkatan,omitempty"`
+}
+
 type VerifyEmailRequest struct {
 	Token string `json:"token" binding:"required"`
 }

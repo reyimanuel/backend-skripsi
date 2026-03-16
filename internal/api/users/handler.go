@@ -1,6 +1,8 @@
 package user
 
 import (
+	"errors"
+	"io"
 	"log"
 	"strconv"
 
@@ -138,7 +140,18 @@ func (h *Handler) ApproveStudent(ctx *gin.Context) {
 		return
 	}
 
-	response, err := h.Service.ApproveStudent(uint(id), adminID)
+	var req ApproveStudentRequest
+	var reqPtr *ApproveStudentRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		if !errors.Is(err, io.EOF) {
+			errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+			return
+		}
+	} else {
+		reqPtr = &req
+	}
+
+	response, err := h.Service.ApproveStudent(uint(id), adminID, reqPtr)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
