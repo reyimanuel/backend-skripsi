@@ -3,6 +3,7 @@ package migration
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -10,14 +11,37 @@ import (
 	"gorm.io/gorm"
 )
 
+func findAnyDocxTemplatePath() (string, error) {
+	dir := filepath.Join("public", "letter-template")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("cannot read template directory %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(e.Name()), ".docx") {
+			return filepath.Join(dir, e.Name()), nil
+		}
+	}
+	return "", fmt.Errorf("no .docx template found under %s", dir)
+}
+
 func Seed(db *gorm.DB, force bool) error {
 	host := os.Getenv("DB_HOST")
 	if !force && !strings.EqualFold(host, "localhost") && host != "127.0.0.1" {
 		return fmt.Errorf("seeding blocked in production (DB_HOST=%s), use --force", host)
 	}
 
+	templateDocxPath, err := findAnyDocxTemplatePath()
+	if err != nil {
+		return err
+	}
+
 	return db.Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
+		photoPath := filepath.ToSlash(filepath.Join("public", "images", "profile-photos", "example.png"))
 
 		if err := tx.Exec(`
 			TRUNCATE TABLE 
@@ -63,6 +87,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:           "admin@kampus.ac.id",
 			Password:        pwd,
 			Roles:           []Role{roleMap["ADMIN"]},
+			ProfilePhoto:    &photoPath,
 			EmailVerifiedAt: &now,
 			IsActive:        true,
 		}
@@ -72,6 +97,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:           "dekan@kampus.ac.id",
 			Password:        pwd,
 			Roles:           []Role{roleMap["DEKAN"]},
+			ProfilePhoto:    &photoPath,
 			EmailVerifiedAt: &now,
 			IsActive:        true,
 		}
@@ -81,6 +107,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:           "wakildekan@kampus.ac.id",
 			Password:        pwd,
 			Roles:           []Role{roleMap["WAKIL_DEKAN"]},
+			ProfilePhoto:    &photoPath,
 			EmailVerifiedAt: &now,
 			IsActive:        true,
 		}
@@ -90,6 +117,7 @@ func Seed(db *gorm.DB, force bool) error {
 			Email:           "mahasiswa@test.ac.id",
 			Password:        pwd,
 			Roles:           []Role{roleMap["MAHASISWA"]},
+			ProfilePhoto:    &photoPath,
 			EmailVerifiedAt: &now,
 			IsActive:        true,
 		}
@@ -108,6 +136,7 @@ func Seed(db *gorm.DB, force bool) error {
 			AdminVerificationStatus: "approved",
 			AdminVerifiedBy:         &admin.ID,
 			AdminVerifiedAt:         &now,
+			RejectionReason:         "",
 		}
 
 		if err := tx.Create(&student).Error; err != nil {
@@ -154,6 +183,20 @@ func Seed(db *gorm.DB, force bool) error {
 		}
 
 		if err := tx.Create(&letterTypes).Error; err != nil {
+			return err
+		}
+
+		templates := make([]LetterTemplate, 0, len(letterTypes))
+		for _, lt := range letterTypes {
+			templates = append(templates, LetterTemplate{
+				LetterTypeID: lt.ID,
+				FilePath:     templateDocxPath,
+				FileType:     "docx",
+				CreatedBy:    admin.ID,
+			})
+		}
+
+		if err := tx.Create(&templates).Error; err != nil {
 			return err
 		}
 

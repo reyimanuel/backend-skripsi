@@ -203,7 +203,16 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 }
 
 func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
-	_, historyAction, message := approvalResult(req.Action)
+	historyAction := historyApproved
+	message := "Surat berhasil disetujui"
+	switch req.Action {
+	case "reject":
+		historyAction = historyRejected
+		message = "Surat berhasil ditolak"
+	case "forward":
+		historyAction = historyForwarded
+		message = "Surat berhasil diteruskan"
+	}
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		now := time.Now()
@@ -367,34 +376,28 @@ func (s *Service) generateLetterDocument(templatePath string, outputPath string,
 	return nil
 }
 
-func sanitizePayload(payload map[string]any) map[string]any {
-	clean := make(map[string]any, len(payload))
-	for key, value := range payload {
-		if _, blocked := blockedPayloadFields[key]; blocked {
-			continue
-		}
-		clean[key] = value
-	}
-	return clean
-}
-
-func clonePayload(payload map[string]any) map[string]any {
+func copyPayload(payload map[string]any, blocked map[string]struct{}) map[string]any {
 	cloned := make(map[string]any, len(payload))
 	for key, value := range payload {
+		if blocked != nil {
+			if _, isBlocked := blocked[key]; isBlocked {
+				continue
+			}
+		}
 		cloned[key] = value
 	}
 	return cloned
 }
 
 func buildSubmitPayload(payload map[string]any, generatedAt time.Time, academicYear string) map[string]any {
-	enriched := clonePayload(sanitizePayload(payload))
+	enriched := copyPayload(payload, blockedPayloadFields)
 	enriched["tanggal"] = helpers.FormatIndonesianDate(generatedAt)
 	enriched["tahun_ajaran"] = academicYear
 	return enriched
 }
 
 func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNumber string, official *migration.Official) map[string]any {
-	enriched := clonePayload(payload)
+	enriched := copyPayload(payload, nil)
 	enriched["tanggal"] = helpers.FormatIndonesianDate(approvedAt)
 	enriched["nomor_surat"] = letterNumber
 	enriched["official"] = official.User.Name
@@ -416,17 +419,14 @@ func buildTemplateData(student *migration.Student, payload map[string]any) map[s
 		if _, blocked := studentTemplateFields[key]; blocked {
 			continue
 		}
-		data[key] = stringifyTemplateValue(value)
+		if value == nil {
+			data[key] = ""
+			continue
+		}
+		data[key] = fmt.Sprint(value)
 	}
 
 	return data
-}
-
-func stringifyTemplateValue(value any) string {
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprint(value)
 }
 
 func marshalPayload(payload map[string]any) (datatypes.JSON, error) {
@@ -446,15 +446,4 @@ func unmarshalPayload(payload datatypes.JSON) (map[string]any, error) {
 		return nil, err
 	}
 	return decoded, nil
-}
-
-func approvalResult(action string) (status string, historyAction string, message string) {
-	switch action {
-	case "reject":
-		return statusRejected, historyRejected, "Surat berhasil ditolak"
-	case "forward":
-		return statusForwarded, historyForwarded, "Surat berhasil diteruskan"
-	default:
-		return statusApproved, historyApproved, "Surat berhasil disetujui"
-	}
 }

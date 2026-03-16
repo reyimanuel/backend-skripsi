@@ -25,6 +25,7 @@ type User struct {
 	Name            string     `gorm:"column:name;not null"`
 	Email           string     `gorm:"column:email;uniqueIndex;not null"`
 	Password        string     `gorm:"column:password;not null"`
+	ProfilePhoto    *string    `gorm:"column:profile_photo;size:255"`
 	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 	EmailVerifiedAt *time.Time `gorm:"column:email_verified_at;index"`

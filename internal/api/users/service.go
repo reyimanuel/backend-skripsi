@@ -140,6 +140,11 @@ func (s *Service) GetPendingStudents() (*Response, error) {
 
 	result := make([]PendingStudentResponse, 0, len(students))
 	for _, student := range students {
+		emailVerifiedAt := time.Time{}
+		if student.User.EmailVerifiedAt != nil {
+			emailVerifiedAt = *student.User.EmailVerifiedAt
+		}
+
 		item := PendingStudentResponse{
 			StudentID:               student.ID,
 			UserID:                  student.UserID,
@@ -150,7 +155,7 @@ func (s *Service) GetPendingStudents() (*Response, error) {
 			Kredensial:              student.KredensialPath,
 			AdminVerificationStatus: student.AdminVerificationStatus,
 			RejectionReason:         student.RejectionReason,
-			EmailVerifiedAt:         derefTime(student.User.EmailVerifiedAt),
+			EmailVerifiedAt:         emailVerifiedAt,
 			CreatedAt:               student.CreatedAt,
 		}
 		if student.AdminVerifiedAt != nil {
@@ -176,21 +181,24 @@ func (s *Service) GetAllUsers() (*Response, error) {
 
 	result := make([]UserListResponse, 0, len(users))
 	for _, usr := range users {
-		result = append(result, UserListResponse{
-			UserID:                  usr.ID,
-			Name:                    usr.Name,
-			Email:                   usr.Email,
-			Roles:                   usr.RoleSlice(),
-			IsActive:                usr.IsActive,
-			EmailVerifiedAt:         usr.EmailVerifiedAt,
-			AdminVerificationStatus: studentStatus(usr.Student),
-			AdminVerifiedAt:         studentVerifiedAt(usr.Student),
-			RejectionReason:         studentRejection(usr.Student),
-			CreatedAt:               usr.CreatedAt,
-		})
-		if usr.Student != nil {
-			result[len(result)-1].StudentID = &usr.Student.ID
+		item := UserListResponse{
+			UserID:          usr.ID,
+			Name:            usr.Name,
+			Email:           usr.Email,
+			Roles:           usr.RoleSlice(),
+			IsActive:        usr.IsActive,
+			EmailVerifiedAt: usr.EmailVerifiedAt,
+			CreatedAt:       usr.CreatedAt,
 		}
+
+		if usr.Student != nil {
+			item.StudentID = &usr.Student.ID
+			item.AdminVerificationStatus = usr.Student.AdminVerificationStatus
+			item.AdminVerifiedAt = usr.Student.AdminVerifiedAt
+			item.RejectionReason = usr.Student.RejectionReason
+		}
+
+		result = append(result, item)
 	}
 
 	return &Response{
@@ -256,6 +264,29 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		return nil, errs.NotFound("user tidak ditemukan")
 	}
 
+	normalizePath := func(p string) string {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return ""
+		}
+		if strings.HasPrefix(p, "/") {
+			return p
+		}
+		return "/" + p
+	}
+
+	isStudent := false
+	isOfficial := false
+	for _, role := range usr.Roles {
+		if strings.EqualFold(role.Code, "MAHASISWA") {
+			isStudent = true
+			continue
+		}
+		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
+			isOfficial = true
+		}
+	}
+
 	resp := MeResponse{
 		UserID:          usr.ID,
 		Name:            usr.Name,
@@ -263,15 +294,51 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		Roles:           usr.RoleSlice(),
 		IsActive:        usr.IsActive,
 		EmailVerifiedAt: usr.EmailVerifiedAt,
+		CreatedAt:       usr.CreatedAt,
+	}
+	if usr.ProfilePhoto != nil {
+		pp := normalizePath(*usr.ProfilePhoto)
+		if pp != "" {
+			resp.ProfilePhoto = &pp
+		}
 	}
 
-	if usr.Student != nil {
-		resp.StudentID = &usr.Student.ID
-		resp.NIM = usr.Student.NIM
-		resp.ProgramStudi = usr.Student.ProgramStudi
-		resp.AdminVerificationStatus = usr.Student.AdminVerificationStatus
-		resp.AdminVerifiedAt = usr.Student.AdminVerifiedAt
-		resp.RejectionReason = usr.Student.RejectionReason
+	if isStudent {
+		student := usr.Student
+		if student == nil {
+			student, err = s.Repo.GetStudentByUserID(s.Repo.DB, usr.ID)
+			if err != nil {
+				return nil, errs.NotFound("data mahasiswa tidak ditemukan")
+			}
+		}
+
+		resp.StudentID = &student.ID
+		resp.NIM = student.NIM
+		resp.ProgramStudi = student.ProgramStudi
+		resp.Angkatan = student.Angkatan
+		resp.KredensialPath = normalizePath(student.KredensialPath)
+		resp.AdminVerificationStatus = student.AdminVerificationStatus
+		resp.AdminVerifiedAt = student.AdminVerifiedAt
+		resp.RejectionReason = student.RejectionReason
+	}
+
+	if isOfficial {
+		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, usr.ID)
+		if err != nil {
+			log.Printf("error getting official profile: user_id=%d err=%v", usr.ID, err)
+			return nil, errs.InternalServerError("gagal mengambil data official")
+		}
+		if official == nil {
+			return nil, errs.NotFound("data official tidak ditemukan")
+		}
+
+		onDuty := official.IsOnDuty
+		resp.OfficialID = &official.ID
+		resp.NIP = official.NIP
+		resp.Pangkat = official.Pangkat
+		resp.Jabatan = official.Jabatan
+		resp.Signature = normalizePath(official.Signature)
+		resp.IsOnDuty = &onDuty
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diambil", Data: resp}, nil
@@ -497,7 +564,19 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 		return errs.Unauthorized("Email belum diverifikasi. Silakan cek inbox email Anda.")
 	}
 
-	if hasRole(user.Roles, "MAHASISWA") {
+	isStudent := false
+	isOfficial := false
+	for _, role := range user.Roles {
+		if strings.EqualFold(role.Code, "MAHASISWA") {
+			isStudent = true
+			continue
+		}
+		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
+			isOfficial = true
+		}
+	}
+
+	if isStudent {
 		if user.Student == nil {
 			student, err := s.Repo.GetStudentByUserID(s.Repo.DB, user.ID)
 			if err != nil {
@@ -511,7 +590,7 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 		}
 	}
 
-	if hasOfficialRole(user.Roles) {
+	if isOfficial {
 		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, user.ID)
 		if err != nil {
 			return errs.InternalServerError("Gagal memvalidasi status official")
@@ -522,50 +601,4 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 	}
 
 	return nil
-}
-
-func hasRole(roles []migration.Role, code string) bool {
-	for _, role := range roles {
-		if strings.EqualFold(role.Code, code) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasOfficialRole(roles []migration.Role) bool {
-	for _, role := range roles {
-		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
-			return true
-		}
-	}
-	return false
-}
-
-func studentStatus(student *migration.Student) string {
-	if student == nil {
-		return ""
-	}
-	return student.AdminVerificationStatus
-}
-
-func studentVerifiedAt(student *migration.Student) *time.Time {
-	if student == nil {
-		return nil
-	}
-	return student.AdminVerifiedAt
-}
-
-func studentRejection(student *migration.Student) string {
-	if student == nil {
-		return ""
-	}
-	return student.RejectionReason
-}
-
-func derefTime(value *time.Time) time.Time {
-	if value == nil {
-		return time.Time{}
-	}
-	return *value
 }

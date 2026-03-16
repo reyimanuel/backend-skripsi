@@ -56,6 +56,9 @@ func startHTTPServer(cfg *config.AppConfigurationMap, db *gorm.DB) {
 		middleware.CORSMiddleware(), // CORS headers
 	)
 
+	// Serve uploaded/generated files.
+	r.Static("/public", "./public")
+
 	// Register API routes and inject database connection
 	api.RegisterRoutes(r, db)
 
