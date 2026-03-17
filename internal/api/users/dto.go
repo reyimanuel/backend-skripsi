@@ -30,18 +30,19 @@ type TokenResponse struct {
 }
 
 type PendingStudentResponse struct {
-	StudentID               uint      `json:"student_id"`
-	UserID                  uint      `json:"user_id"`
-	Name                    string    `json:"name"`
-	Email                   string    `json:"email"`
-	NIM                     string    `json:"nim"`
-	ProgramStudi            string    `json:"program_studi"`
-	Kredensial              string    `json:"kredensial,omitempty"`
-	AdminVerificationStatus string    `json:"admin_verification_status"`
-	AdminVerifiedAt         time.Time `json:"admin_verified_at,omitempty"`
-	RejectionReason         string    `json:"rejection_reason,omitempty"`
-	EmailVerifiedAt         time.Time `json:"email_verified_at,omitempty"`
-	CreatedAt               time.Time `json:"created_at"`
+	StudentID               uint       `json:"student_id"`
+	UserID                  uint       `json:"user_id"`
+	Name                    string     `json:"name"`
+	Email                   string     `json:"email"`
+	NIM                     string     `json:"nim"`
+	ProgramStudi            string     `json:"program_studi"`
+	Angkatan                int        `json:"angkatan"`
+	Kredensial              string     `json:"kredensial,omitempty"`
+	AdminVerificationStatus string     `json:"admin_verification_status"`
+	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
+	RejectionReason         string     `json:"rejection_reason,omitempty"`
+	EmailVerifiedAt         *time.Time `json:"email_verified_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
 }
 
 // RegisterWithKRSRequest is received as multipart/form-data.
@@ -135,4 +136,13 @@ type CreateOfficialRequest struct {
 	Pangkat   string `json:"pangkat"`
 	Jabatan   string `json:"jabatan" binding:"required"`
 	Signature string `json:"signature"`
+}
+
+// AdminUpdateUserRequest is used by admin to update a user account.
+// All fields are optional; if omitted, the field will not be updated.
+type AdminUpdateUserRequest struct {
+	Name         *string `json:"name,omitempty"`
+	Email        *string `json:"email,omitempty" binding:"omitempty,email"`
+	IsActive     *bool   `json:"is_active,omitempty"`
+	ProfilePhoto *string `json:"profile_photo,omitempty"`
 }

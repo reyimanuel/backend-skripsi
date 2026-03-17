@@ -23,6 +23,8 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	admin := r.Group("/", middleware.MiddlewareAuth, middleware.MiddlewareRole("ADMIN"))
 	{
 		admin.GET("/all", handler.GetAllUsers)
+		admin.PATCH("/:id", handler.AdminUpdateUser)
+		admin.DELETE("/:id", handler.AdminDeleteUser)
 		admin.GET("/pending/students", handler.GetPendingStudents)
 		admin.POST("/students/:id/approve", handler.ApproveStudent)
 		admin.POST("/students/:id/reject", handler.RejectStudent)

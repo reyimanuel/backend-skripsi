@@ -195,8 +195,8 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			Subject:      letter.Subject,
 			Status:       letter.Status,
 			Payload:      payloadMap,
-			FilePath:     "/" + outputDocx,
-			PreviewURL:   fmt.Sprintf("/api/correspondence/preview/%d", letter.ID),
+			FilePath:     helpers.ToAbsoluteURL(outputDocx),
+			PreviewURL:   helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
 			CreatedAt:    letter.CreatedAt,
 		},
 	}, nil
@@ -337,7 +337,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 		Message:    message,
 		Data: PreviewResponse{
 			ID:         letterID,
-			PreviewURL: fmt.Sprintf("/api/correspondence/preview/%d", letterID),
+			PreviewURL: helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letterID)),
 		},
 	}, nil
 }

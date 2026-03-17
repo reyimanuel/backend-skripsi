@@ -110,7 +110,7 @@ func (r *Repository) CreateOfficialWithUser(tx *gorm.DB, user *migration.User, o
 func baseUserQuery(tx *gorm.DB) *gorm.DB {
 	return tx.Model(&migration.User{}).
 		Preload("Roles").
-		Preload("Student")
+		Preload("Student", "admin_verification_status = ?", "approved")
 }
 
 func (r *Repository) GetPendingStudents(tx *gorm.DB) ([]migration.Student, error) {
@@ -162,6 +162,8 @@ func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
 func (r *Repository) GetAllUsers(tx *gorm.DB) ([]migration.User, error) {
 	var users []migration.User
 	err := baseUserQuery(tx).
+		Joins("LEFT JOIN students ON students.user_id = users.id").
+		Where("students.id IS NULL OR students.admin_verification_status = ?", "approved").
 		Order("users.created_at DESC").
 		Find(&users).Error
 	return users, err

@@ -210,6 +210,44 @@ func (h *Handler) CreateOfficial(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) AdminUpdateUser(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
+		return
+	}
+
+	var req AdminUpdateUserRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
+	response, err := h.Service.AdminUpdateUser(uint(id), req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) AdminDeleteUser(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID tidak valid"))
+		return
+	}
+
+	response, err := h.Service.AdminDeleteUser(uint(id))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) RegisterWithKRS(ctx *gin.Context) {
 	var payload RegisterWithKRSRequest
 	if err := ctx.ShouldBind(&payload); err != nil {

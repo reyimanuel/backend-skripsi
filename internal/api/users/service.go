@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -142,11 +143,6 @@ func (s *Service) GetPendingStudents() (*Response, error) {
 
 	result := make([]PendingStudentResponse, 0, len(students))
 	for _, student := range students {
-		emailVerifiedAt := time.Time{}
-		if student.User.EmailVerifiedAt != nil {
-			emailVerifiedAt = *student.User.EmailVerifiedAt
-		}
-
 		item := PendingStudentResponse{
 			StudentID:               student.ID,
 			UserID:                  student.UserID,
@@ -154,15 +150,14 @@ func (s *Service) GetPendingStudents() (*Response, error) {
 			Email:                   student.User.Email,
 			NIM:                     student.NIM,
 			ProgramStudi:            student.ProgramStudi,
-			Kredensial:              student.KredensialPath,
+			Angkatan:                student.Angkatan,
+			Kredensial:              helpers.ToAbsoluteURL(student.KredensialPath),
 			AdminVerificationStatus: student.AdminVerificationStatus,
 			RejectionReason:         student.RejectionReason,
-			EmailVerifiedAt:         emailVerifiedAt,
+			EmailVerifiedAt:         student.User.EmailVerifiedAt,
 			CreatedAt:               student.CreatedAt,
 		}
-		if student.AdminVerifiedAt != nil {
-			item.AdminVerifiedAt = *student.AdminVerifiedAt
-		}
+		item.AdminVerifiedAt = student.AdminVerifiedAt
 
 		result = append(result, item)
 	}
@@ -210,9 +205,87 @@ func (s *Service) GetAllUsers() (*Response, error) {
 	}, nil
 }
 
+func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Response, error) {
+	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		return nil, errs.NotFound("user tidak ditemukan")
+	}
+
+	updates := map[string]any{}
+
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			return nil, errs.BadRequest("nama tidak boleh kosong")
+		}
+		updates["name"] = name
+	}
+
+	if req.Email != nil {
+		email := strings.TrimSpace(*req.Email)
+		if email == "" {
+			return nil, errs.BadRequest("email tidak boleh kosong")
+		}
+
+		if !strings.EqualFold(strings.TrimSpace(usr.Email), email) {
+			if existing, err := s.Repo.GetByEmail(email); err == nil {
+				if existing.ID != usr.ID {
+					return nil, errs.BadRequest("email sudah terdaftar")
+				}
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("error checking email uniqueness: %v", err)
+				return nil, errs.InternalServerError("gagal memproses update user")
+			}
+		}
+
+		updates["email"] = email
+	}
+
+	if req.IsActive != nil {
+		updates["is_active"] = *req.IsActive
+	}
+
+	if req.ProfilePhoto != nil {
+		updates["profile_photo"] = strings.TrimSpace(*req.ProfilePhoto)
+	}
+
+	if len(updates) == 0 {
+		return nil, errs.BadRequest("tidak ada data yang diupdate")
+	}
+
+	if err := s.Repo.UpdateUserFields(s.Repo.DB, userID, updates); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, errs.BadRequest("email sudah terdaftar")
+		}
+		log.Printf("error updating user %d: %v", userID, err)
+		return nil, errs.InternalServerError("gagal memperbarui user")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "User berhasil diperbarui"}, nil
+}
+
+func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
+	if _, err := s.Repo.GetUserByID(s.Repo.DB, userID); err != nil {
+		return nil, errs.NotFound("user tidak ditemukan")
+	}
+
+	if err := s.Repo.DeleteUser(s.Repo.DB, userID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return nil, errs.BadRequest("user tidak dapat dihapus karena masih memiliki data terkait")
+		}
+		log.Printf("error deleting user %d: %v", userID, err)
+		return nil, errs.InternalServerError("gagal menghapus user")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "User berhasil dihapus"}, nil
+}
+
 func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStudentRequest) (*Response, error) {
 	var kredensialPath string
 
+	fmt.Printf("approving student %d by admin %d with req: %+v\n", studentID, adminID, req) // debug log
 	err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		student, err := s.resolvePendingStudentTx(tx, studentID)
 		if err != nil {
@@ -259,7 +332,7 @@ func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStude
 
 		if kredensialPath != "" {
 			if err := s.Repo.ClearStudentKredensial(tx, student.ID); err != nil {
-				log.Printf("error membersihkan path kredensial mahasiswa %d: %v", studentID, err)
+				log.Printf("erroxr membersihkan path kredensial mahasiswa %d: %v", studentID, err)
 				return errs.InternalServerError("gagal memproses persetujuan mahasiswa")
 			}
 		}
@@ -310,17 +383,6 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		return nil, errs.NotFound("user tidak ditemukan")
 	}
 
-	normalizePath := func(p string) string {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return ""
-		}
-		if strings.HasPrefix(p, "/") {
-			return p
-		}
-		return "/" + p
-	}
-
 	isStudent := false
 	isOfficial := false
 	for _, role := range usr.Roles {
@@ -343,7 +405,7 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		CreatedAt:       usr.CreatedAt,
 	}
 	if usr.ProfilePhoto != nil {
-		pp := normalizePath(*usr.ProfilePhoto)
+		pp := helpers.ToAbsoluteURL(*usr.ProfilePhoto)
 		if pp != "" {
 			resp.ProfilePhoto = &pp
 		}
@@ -362,7 +424,7 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		resp.NIM = student.NIM
 		resp.ProgramStudi = student.ProgramStudi
 		resp.Angkatan = student.Angkatan
-		resp.KredensialPath = normalizePath(student.KredensialPath)
+		resp.KredensialPath = helpers.ToAbsoluteURL(student.KredensialPath)
 		resp.AdminVerificationStatus = student.AdminVerificationStatus
 		resp.AdminVerifiedAt = student.AdminVerifiedAt
 		resp.RejectionReason = student.RejectionReason
@@ -383,7 +445,7 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		resp.NIP = official.NIP
 		resp.Pangkat = official.Pangkat
 		resp.Jabatan = official.Jabatan
-		resp.Signature = normalizePath(official.Signature)
+		resp.Signature = helpers.ToAbsoluteURL(official.Signature)
 		resp.IsOnDuty = &onDuty
 	}
 
