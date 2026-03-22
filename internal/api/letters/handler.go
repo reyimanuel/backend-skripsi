@@ -50,6 +50,34 @@ func (h *Handler) UploadTemplate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, response)
 }
 
+func (h *Handler) UploadTemplateFlexible(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("pengguna tidak terautentikasi"))
+		return
+	}
+
+	var req UploadTemplateFlexibleRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		return
+	}
+
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("file tidak ditemukan"))
+		return
+	}
+
+	response, err := h.Service.UploadTemplateFlexible(userID, req, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) PreviewTemplate(ctx *gin.Context) {
 	idParam := ctx.Param("id")
 	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
@@ -75,4 +103,31 @@ func (h *Handler) PreviewTemplate(ctx *gin.Context) {
 	ctx.Header("Content-Disposition", "inline; filename=preview.pdf")
 
 	http.ServeContent(ctx.Writer, ctx.Request, "preview.pdf", time.Now(), file)
+}
+
+func (h *Handler) DeleteTemplate(ctx *gin.Context) {
+	idParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("id tidak valid"))
+		return
+	}
+
+	response, err := h.Service.DeleteTemplate(uint(letterTypeID))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) GetAllTemplates(ctx *gin.Context) {
+	response, err := h.Service.GetAllTemplates()
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
 }

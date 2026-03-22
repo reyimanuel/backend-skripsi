@@ -78,3 +78,25 @@ func (r *Repository) CountApprovedThisYear(tx *gorm.DB) (int64, error) {
 
 	return count, err
 }
+
+func (r *Repository) GetAttachmentsByLetterID(tx *gorm.DB, letterID uint) ([]migration.LetterAttachment, error) {
+	var atts []migration.LetterAttachment
+	err := tx.Where("letter_id = ?", letterID).Find(&atts).Error
+	return atts, err
+}
+
+func (r *Repository) DeleteAttachmentsByLetterID(tx *gorm.DB, letterID uint) error {
+	return tx.Where("letter_id = ?", letterID).Delete(&migration.LetterAttachment{}).Error
+}
+
+func (r *Repository) DeleteApprovalsByLetterID(tx *gorm.DB, letterID uint) error {
+	return tx.Where("letter_id = ?", letterID).Delete(&migration.LetterApproval{}).Error
+}
+
+func (r *Repository) DeleteHistoriesByLetterID(tx *gorm.DB, letterID uint) error {
+	return tx.Where("letter_id = ?", letterID).Delete(&migration.LetterHistory{}).Error
+}
+
+func (r *Repository) DeleteLetterByID(tx *gorm.DB, letterID uint) error {
+	return tx.Delete(&migration.Letter{}, letterID).Error
+}

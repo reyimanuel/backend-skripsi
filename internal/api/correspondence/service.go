@@ -2,10 +2,13 @@ package correspondence
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/api/letters"
@@ -340,6 +343,91 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			PreviewURL: helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letterID)),
 		},
 	}, nil
+}
+
+func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Response, error) {
+	var docxPath string
+	var attachmentPaths []string
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errs.NotFound("Surat tidak ditemukan")
+			}
+			return err
+		}
+
+		if !isAdmin {
+			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+			if err != nil {
+				return errs.Forbidden("Hanya mahasiswa yang dapat menghapus surat")
+			}
+			if letter.StudentID != student.ID {
+				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+			}
+			if letter.Status == statusForwarded || letter.Status == statusApproved {
+				return errs.BadRequest("Surat tidak dapat dihapus pada status saat ini")
+			}
+		}
+
+		docxPath = letter.FilePath
+
+		atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
+		if err != nil {
+			log.Printf("error fetching attachments for delete: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal menghapus surat")
+		}
+		attachmentPaths = make([]string, 0, len(atts))
+		for _, a := range atts {
+			if a.FilePath != "" {
+				attachmentPaths = append(attachmentPaths, a.FilePath)
+			}
+		}
+
+		if err := s.Repo.DeleteAttachmentsByLetterID(tx, letterID); err != nil {
+			log.Printf("error deleting attachments: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal menghapus surat")
+		}
+		if err := s.Repo.DeleteHistoriesByLetterID(tx, letterID); err != nil {
+			log.Printf("error deleting histories: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal menghapus surat")
+		}
+		if err := s.Repo.DeleteApprovalsByLetterID(tx, letterID); err != nil {
+			log.Printf("error deleting approvals: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal menghapus surat")
+		}
+		if err := s.Repo.DeleteLetterByID(tx, letterID); err != nil {
+			log.Printf("error deleting letter: id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal menghapus surat")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Best-effort file cleanup after transaction commit.
+	pathsToRemove := make([]string, 0, 2+len(attachmentPaths))
+	if strings.TrimSpace(docxPath) != "" {
+		pathsToRemove = append(pathsToRemove, docxPath)
+		pdfPath := strings.TrimSuffix(docxPath, filepath.Ext(docxPath)) + ".pdf"
+		pathsToRemove = append(pathsToRemove, pdfPath)
+	}
+	pathsToRemove = append(pathsToRemove, attachmentPaths...)
+
+	for _, p := range pathsToRemove {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("failed removing file %q: %v", p, err)
+		}
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
 // private helpers

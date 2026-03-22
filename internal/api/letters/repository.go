@@ -48,6 +48,18 @@ func (r *Repository) GetLetterTypeByID(tx *gorm.DB, id uint) (*migration.LetterT
 	return &letterType, nil
 }
 
+func (r *Repository) GetLetterTypeByCode(tx *gorm.DB, code string) (*migration.LetterType, error) {
+	var letterType migration.LetterType
+	if err := tx.Where("code = ?", code).First(&letterType).Error; err != nil {
+		return nil, err
+	}
+	return &letterType, nil
+}
+
+func (r *Repository) CreateLetterType(tx *gorm.DB, t *migration.LetterType) error {
+	return tx.Create(t).Error
+}
+
 func (r *Repository) GetLetterByID(tx *gorm.DB, letterID uint) (*migration.Letter, error) {
 	var letter migration.Letter
 	if err := tx.Where("id = ?", letterID).First(&letter).Error; err != nil {
@@ -76,4 +88,14 @@ func (r *Repository) GetTemplateByLetterTypeID(
 	}
 
 	return &template, nil
+}
+
+func (r *Repository) DeleteTemplateByLetterTypeID(tx *gorm.DB, letterTypeID uint) error {
+	return tx.Where("letter_type_id = ?", letterTypeID).Delete(&migration.LetterTemplate{}).Error
+}
+
+func (r *Repository) ListTemplates(tx *gorm.DB) ([]migration.LetterTemplate, error) {
+	var templates []migration.LetterTemplate
+	err := tx.Preload("LetterType").Order("updated_at desc").Find(&templates).Error
+	return templates, err
 }
