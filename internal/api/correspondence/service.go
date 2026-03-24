@@ -430,6 +430,206 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
+func (s *Service) GetLetterHistory(letterID uint, userID uint, isAdmin bool) (*Response, error) {
+	var out []LetterHistoryItem
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errs.NotFound("Surat tidak ditemukan")
+			}
+			return err
+		}
+
+		if !isAdmin {
+			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+			if err != nil {
+				return errs.Forbidden("Hanya pemilik surat yang dapat melihat riwayat")
+			}
+			if letter.StudentID != student.ID {
+				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+			}
+		}
+
+		histories, err := s.Repo.ListHistoriesByLetterID(tx, letterID)
+		if err != nil {
+			log.Printf("error fetching histories: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal mengambil riwayat surat")
+		}
+
+		out = make([]LetterHistoryItem, 0, len(histories))
+		for _, h := range histories {
+			var actor *HistoryActor
+			if h.Actor.ID != 0 {
+				actor = &HistoryActor{UserID: h.Actor.ID, Name: h.Actor.Name}
+			}
+			out = append(out, LetterHistoryItem{
+				ID:        h.ID,
+				Action:    h.Action,
+				Notes:     h.Notes,
+				Actor:     actor,
+				CreatedAt: h.CreatedAt,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Riwayat surat berhasil diambil", Data: out}, nil
+}
+
+func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*Response, error) {
+	allowedStatus := map[string]struct{}{
+		"":              {},
+		statusSubmitted: {},
+		statusForwarded: {},
+		statusApproved:  {},
+		statusRejected:  {},
+	}
+	if _, ok := allowedStatus[strings.TrimSpace(q.Status)]; !ok {
+		return nil, errs.BadRequest("status tidak valid")
+	}
+
+	sort := strings.TrimSpace(q.Sort)
+	if sort != "" && sort != "created_at_desc" && sort != "created_at_asc" {
+		return nil, errs.BadRequest("sort tidak valid")
+	}
+	if sort == "" {
+		sort = "created_at_desc"
+	}
+
+	page := q.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	var createdFrom *time.Time
+	if strings.TrimSpace(q.CreatedFrom) != "" {
+		tm, err := parseTimeOrDate(strings.TrimSpace(q.CreatedFrom))
+		if err != nil {
+			return nil, errs.BadRequest("created_from tidak valid")
+		}
+		createdFrom = &tm
+	}
+	var createdTo *time.Time
+	if strings.TrimSpace(q.CreatedTo) != "" {
+		tm, err := parseTimeOrDate(strings.TrimSpace(q.CreatedTo))
+		if err != nil {
+			return nil, errs.BadRequest("created_to tidak valid")
+		}
+		createdTo = &tm
+	}
+	if createdFrom != nil && createdTo != nil && createdFrom.After(*createdTo) {
+		return nil, errs.BadRequest("range tanggal tidak valid")
+	}
+
+	var letterTypeID *uint
+	if q.LetterType != 0 {
+		letterTypeID = &q.LetterType
+	}
+
+	var items []LetterListItem
+	var total int64
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		var studentID *uint
+		if !isAdmin {
+			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+			if err != nil {
+				return errs.Forbidden("Hanya mahasiswa yang dapat melihat surat miliknya")
+			}
+			studentID = &student.ID
+		}
+
+		letters, count, err := s.Repo.ListLetters(tx, ListLettersParams{
+			StudentID:   studentID,
+			Query:       q.Q,
+			Status:      strings.TrimSpace(q.Status),
+			LetterType:  letterTypeID,
+			CreatedFrom: createdFrom,
+			CreatedTo:   createdTo,
+			Sort:        sort,
+			Page:        page,
+			PageSize:    pageSize,
+		})
+		if err != nil {
+			log.Printf("error listing letters: %v", err)
+			return errs.InternalServerError("Gagal mengambil daftar surat")
+		}
+		total = count
+
+		items = make([]LetterListItem, 0, len(letters))
+		for _, l := range letters {
+			previewURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", l.ID))
+			historyURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/%d/history", l.ID))
+
+			var student *StudentSummary
+			if isAdmin {
+				student = &StudentSummary{
+					StudentID: l.Student.ID,
+					UserID:    l.Student.User.ID,
+					Name:      l.Student.User.Name,
+					NIM:       l.Student.NIM,
+				}
+			}
+
+			items = append(items, LetterListItem{
+				ID:      l.ID,
+				Subject: l.Subject,
+				Status:  l.Status,
+				LetterNo: func() *string {
+					if l.LetterNumber == nil || strings.TrimSpace(*l.LetterNumber) == "" {
+						return nil
+					}
+					return l.LetterNumber
+				}(),
+				LetterType: LetterTypeSummary{ID: l.LetterType.ID, Code: l.LetterType.Code, Name: l.LetterType.Name},
+				Student:    student,
+				PreviewURL: previewURL,
+				HistoryURL: historyURL,
+				CreatedAt:  l.CreatedAt,
+				UpdatedAt:  l.UpdatedAt,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "Daftar surat berhasil diambil",
+		Data: LetterListData{
+			Items: items,
+			Meta:  PaginationMeta{Page: page, PageSize: pageSize, Total: total},
+		},
+	}, nil
+}
+
+func parseTimeOrDate(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	if tm, err := time.Parse(time.RFC3339, value); err == nil {
+		return tm, nil
+	}
+	// Fallback: yyyy-mm-dd
+	return time.ParseInLocation("2006-01-02", value, time.UTC)
+}
+
 // private helpers
 
 func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.Official, error) {

@@ -153,3 +153,72 @@ func (h *Handler) DeleteLetter(ctx *gin.Context) {
 
 	ctx.JSON(response.StatusCode, response)
 }
+
+func (h *Handler) GetLetterHistory(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	auth, exists := ctx.Get("auth")
+	if !exists {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	claims, ok := auth.(*token.UserAuthToken)
+	if !ok {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	letterIDParam := ctx.Param("id")
+	letterID, err := strconv.Atoi(letterIDParam)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("surat tidak valid"))
+		return
+	}
+
+	response, err := h.Service.GetLetterHistory(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) ListLetters(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	auth, exists := ctx.Get("auth")
+	if !exists {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	claims, ok := auth.(*token.UserAuthToken)
+	if !ok {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var q ListLettersQuery
+	if err := ctx.ShouldBindQuery(&q); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("query tidak valid"))
+		return
+	}
+
+	response, err := h.Service.ListLetters(userID, slices.Contains(claims.Roles, "ADMIN"), q)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}

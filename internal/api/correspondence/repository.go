@@ -1,11 +1,24 @@
 package correspondence
 
 import (
+	"strings"
 	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
 )
+
+type ListLettersParams struct {
+	StudentID   *uint
+	Query       string
+	Status      string
+	LetterType  *uint
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Sort        string
+	Page        int
+	PageSize    int
+}
 
 type Repository struct {
 	DB *gorm.DB
@@ -99,4 +112,80 @@ func (r *Repository) DeleteHistoriesByLetterID(tx *gorm.DB, letterID uint) error
 
 func (r *Repository) DeleteLetterByID(tx *gorm.DB, letterID uint) error {
 	return tx.Delete(&migration.Letter{}, letterID).Error
+}
+
+func (r *Repository) ListHistoriesByLetterID(tx *gorm.DB, letterID uint) ([]migration.LetterHistory, error) {
+	var histories []migration.LetterHistory
+	err := tx.
+		Preload("Actor").
+		Where("letter_id = ?", letterID).
+		Order("created_at asc").
+		Find(&histories).Error
+	return histories, err
+}
+
+func (r *Repository) ListLetters(tx *gorm.DB, p ListLettersParams) ([]migration.Letter, int64, error) {
+	query := tx.Model(&migration.Letter{}).
+		Preload("LetterType").
+		Preload("Student").
+		Preload("Student.User").
+		Joins("LEFT JOIN students ON students.id = letters.student_id").
+		Joins("LEFT JOIN users ON users.id = students.user_id").
+		Joins("LEFT JOIN letter_types ON letter_types.id = letters.letter_type_id")
+
+	if p.StudentID != nil {
+		query = query.Where("letters.student_id = ?", *p.StudentID)
+	}
+	if strings.TrimSpace(p.Status) != "" {
+		query = query.Where("letters.status = ?", p.Status)
+	}
+	if p.LetterType != nil {
+		query = query.Where("letters.letter_type_id = ?", *p.LetterType)
+	}
+	if p.CreatedFrom != nil {
+		query = query.Where("letters.created_at >= ?", *p.CreatedFrom)
+	}
+	if p.CreatedTo != nil {
+		query = query.Where("letters.created_at <= ?", *p.CreatedTo)
+	}
+
+	if q := strings.TrimSpace(p.Query); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		query = query.Where(
+			"LOWER(letters.subject) LIKE ? OR LOWER(COALESCE(letters.letter_number, '')) LIKE ? OR LOWER(users.name) LIKE ? OR LOWER(COALESCE(students.nim, '')) LIKE ?",
+			like, like, like, like,
+		)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	sort := strings.TrimSpace(p.Sort)
+	if sort == "created_at_asc" {
+		query = query.Order("letters.created_at asc")
+	} else {
+		query = query.Order("letters.created_at desc")
+	}
+
+	page := p.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := p.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
+	var letters []migration.Letter
+	if err := query.Limit(pageSize).Offset(offset).Find(&letters).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return letters, total, nil
 }
