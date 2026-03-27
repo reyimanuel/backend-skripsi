@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -203,6 +204,68 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			CreatedAt:    letter.CreatedAt,
 		},
 	}, nil
+}
+
+func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, files []*multipart.FileHeader) (*Response, error) {
+	if len(files) == 0 {
+		return nil, errs.BadRequest("file tidak ditemukan")
+	}
+
+	items := make([]AttachmentItem, 0, len(files))
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		if err != nil {
+			return errs.NotFound("Surat tidak ditemukan")
+		}
+
+		if !isAdmin {
+			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+			if err != nil {
+				return errs.Forbidden("Hanya pemilik surat yang dapat mengupload berkas")
+			}
+			if letter.StudentID != student.ID {
+				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+			}
+		}
+
+		for _, f := range files {
+			if f == nil {
+				continue
+			}
+			newName := helpers.GenerateUniqueFileName(f.Filename)
+			newPath := filepath.Join("public", "generated", "attachments", fmt.Sprintf("letter_%d", letterID), newName)
+			if err := helpers.SaveUploadedFile(f, newPath); err != nil {
+				log.Printf("failed saving attachment: letter_id=%d filename=%q err=%v", letterID, f.Filename, err)
+				return errs.InternalServerError("gagal menyimpan berkas")
+			}
+
+			mime, err := helpers.DetectMimeTypeFromPath(newPath)
+			if err != nil {
+				_ = os.Remove(newPath)
+				return errs.InternalServerError("gagal membaca berkas")
+			}
+
+			att := &migration.LetterAttachment{
+				LetterID:   letterID,
+				FilePath:   filepath.ToSlash(newPath),
+				FileType:   mime,
+				UploadedAt: time.Now(),
+			}
+			if err := s.Repo.CreateAttachment(tx, att); err != nil {
+				_ = os.Remove(newPath)
+				return errs.InternalServerError("gagal menyimpan data berkas")
+			}
+
+			items = append(items, AttachmentItem{ID: att.ID, FilePath: helpers.ToAbsoluteURL(att.FilePath), FileType: att.FileType})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusCreated, Message: "Berkas berhasil diupload", Data: UploadAttachmentsResponse{LetterID: letterID, Attachments: items}}, nil
 }
 
 func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
@@ -572,7 +635,7 @@ func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*R
 		items = make([]LetterListItem, 0, len(letters))
 		for _, l := range letters {
 			previewURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", l.ID))
-			historyURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/%d/history", l.ID))
+			historyURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/history/%d", l.ID))
 
 			var student *StudentSummary
 			if isAdmin {

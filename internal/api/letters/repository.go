@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/reyimanuel/letter-administration/internal/migration"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -58,6 +59,12 @@ func (r *Repository) GetLetterTypeByCode(tx *gorm.DB, code string) (*migration.L
 
 func (r *Repository) CreateLetterType(tx *gorm.DB, t *migration.LetterType) error {
 	return tx.Create(t).Error
+}
+
+func (r *Repository) UpdateLetterTypeAttachmentRequirements(tx *gorm.DB, letterTypeID uint, reqs datatypes.JSON) error {
+	return tx.Model(&migration.LetterType{}).
+		Where("id = ?", letterTypeID).
+		Update("attachment_requirements", reqs).Error
 }
 
 func (r *Repository) GetLetterByID(tx *gorm.DB, letterID uint) (*migration.Letter, error) {

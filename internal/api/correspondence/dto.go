@@ -32,6 +32,17 @@ type Response struct {
 	Data       any    `json:"data,omitempty"`
 }
 
+type AttachmentItem struct {
+	ID       uint   `json:"id"`
+	FilePath string `json:"file_path"`
+	FileType string `json:"file_type,omitempty"`
+}
+
+type UploadAttachmentsResponse struct {
+	LetterID    uint             `json:"letter_id"`
+	Attachments []AttachmentItem `json:"attachments"`
+}
+
 type ApproveLetterRequest struct {
 	Action       string `json:"action" binding:"required,oneof=approve reject forward"`
 	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan

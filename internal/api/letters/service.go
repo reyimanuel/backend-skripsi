@@ -1,8 +1,8 @@
 package letters
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +15,7 @@ import (
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/migration"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +25,69 @@ type Service struct {
 
 func NewService(repo *Repository) *Service {
 	return &Service{Repo: repo}
+}
+
+func (s *Service) GetAttachmentRequirements(letterTypeID uint) (*Response, error) {
+	var out LetterTypeRequirementsResponse
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		lt, err := s.Repo.GetLetterTypeByID(tx, letterTypeID)
+		if err != nil {
+			return errs.NotFound("Jenis surat tidak ditemukan")
+		}
+
+		out = LetterTypeRequirementsResponse{LetterTypeID: lt.ID, Code: lt.Code, Name: lt.Name}
+		if len(lt.AttachmentRequirements) == 0 {
+			out.Requirements = []AttachmentRequirement{}
+			return nil
+		}
+
+		var reqs []AttachmentRequirement
+		if err := json.Unmarshal(lt.AttachmentRequirements, &reqs); err != nil {
+			log.Printf("invalid attachment requirements JSON for letter_type_id=%d: %v", lt.ID, err)
+			out.Requirements = []AttachmentRequirement{}
+			return nil
+		}
+		out.Requirements = reqs
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "OK", Data: out}, nil
+}
+
+func (s *Service) UpdateAttachmentRequirements(letterTypeID uint, req UpdateAttachmentRequirementsRequest) (*Response, error) {
+	// minimal validation to keep schema predictable
+	seen := make(map[string]struct{}, len(req.Requirements))
+	for _, r := range req.Requirements {
+		key := strings.TrimSpace(r.Key)
+		label := strings.TrimSpace(r.Label)
+		if key == "" || label == "" {
+			return nil, errs.BadRequest("setiap requirement wajib punya key dan label")
+		}
+		if _, ok := seen[key]; ok {
+			return nil, errs.BadRequest("key requirement tidak boleh duplikat")
+		}
+		seen[key] = struct{}{}
+	}
+
+	payload, err := json.Marshal(req.Requirements)
+	if err != nil {
+		return nil, errs.InternalServerError("gagal menyimpan requirements")
+	}
+
+	err = s.Repo.WithTx(func(tx *gorm.DB) error {
+		if _, err := s.Repo.GetLetterTypeByID(tx, letterTypeID); err != nil {
+			return errs.NotFound("Jenis surat tidak ditemukan")
+		}
+		return s.Repo.UpdateLetterTypeAttachmentRequirements(tx, letterTypeID, datatypes.JSON(payload))
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Requirements berhasil diupdate"}, nil
 }
 
 func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibleRequest, file *multipart.FileHeader) (*Response, error) {
@@ -38,7 +102,7 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 	newPath := filepath.Join("public", "letter-template", newFileName)
 
 	if err := helpers.SaveUploadedFile(file, newPath); err != nil {
-		fmt.Printf("encountered error when saving file")
+		log.Printf("failed saving uploaded template file: path=%q err=%v", newPath, err)
 		return nil, errs.InternalServerError("gagal menyimpan file")
 	}
 
@@ -52,7 +116,7 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 		"application/zip": true,
 	}
 	if !allowedMimes[mime] {
-		fmt.Printf("mime type tidak valid: %s\n", mime)
+		log.Printf("invalid mime type for uploaded template: mime=%q", mime)
 		_ = os.Remove(newPath)
 		return nil, errs.BadRequest("file docx tidak valid")
 	}
@@ -129,7 +193,7 @@ func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipar
 	newPath := filepath.Join("public", "letter-template", newFileName)
 
 	if err := helpers.SaveUploadedFile(file, newPath); err != nil {
-		fmt.Printf("encountered error when saving file")
+		log.Printf("failed saving uploaded template file: path=%q err=%v", newPath, err)
 		return nil, errs.InternalServerError("gagal menyimpan file")
 	}
 
@@ -143,14 +207,13 @@ func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipar
 		"application/zip": true,
 	}
 	if !allowedMimes[mime] {
-		fmt.Printf("mime type tidak valid: %s\n", mime)
+		log.Printf("invalid mime type for uploaded template: mime=%q", mime)
 		return nil, errs.BadRequest("file docx tidak valid")
 	}
 
 	var oldPath string
 
-	fmt.Println("Generated filename:", newFileName)
-	fmt.Println("Generated path:", newPath)
+	log.Printf("generated template file: name=%q path=%q", newFileName, newPath)
 
 	err = s.Repo.WithTx(func(tx *gorm.DB) error {
 
@@ -207,7 +270,7 @@ func (s *Service) PreviewTemplate(letterTypeID uint) (string, error) {
 
 	pdfPath, err := helpers.EnsurePDFPreview(docxPath)
 	if err != nil {
-		fmt.Printf("gagal siapkan preview pdf: %v\n", err)
+		log.Printf("failed preparing template pdf preview: letter_type_id=%d path=%q err=%v", letterTypeID, docxPath, err)
 		return "", errs.InternalServerError("Gagal convert PDF")
 	}
 

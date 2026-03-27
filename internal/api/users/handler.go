@@ -23,7 +23,7 @@ func (h *Handler) Login(ctx *gin.Context) {
 	var payload LoginRequest
 	if err := ctx.ShouldBindJSON(&payload); err != nil {
 		log.Printf("error binding login payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Email dan password wajib diisi"))
 		return
 	}
 
@@ -40,7 +40,7 @@ func (h *Handler) RegisterStudent(ctx *gin.Context) {
 	var payload RegisterStudentRequest
 	if err := ctx.ShouldBind(&payload); err != nil {
 		log.Printf("error binding register payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data pendaftaran tidak valid. Periksa kembali form yang diisi"))
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *Handler) GetMe(ctx *gin.Context) {
 func (h *Handler) VerifyEmail(ctx *gin.Context) {
 	var req VerifyEmailRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Token verifikasi tidak valid"))
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *Handler) VerifyEmail(ctx *gin.Context) {
 func (h *Handler) ResendVerificationEmail(ctx *gin.Context) {
 	var req ResendVerificationRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Email untuk kirim ulang verifikasi tidak valid"))
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *Handler) ApproveStudent(ctx *gin.Context) {
 	var reqPtr *ApproveStudentRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		if !errors.Is(err, io.EOF) {
-			errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+			errs.HandlerError(ctx, errs.BadRequest("Data persetujuan mahasiswa tidak valid"))
 			return
 		}
 	} else {
@@ -169,7 +169,7 @@ func (h *Handler) RejectStudent(ctx *gin.Context) {
 
 	var req RejectStudentRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Alasan penolakan wajib diisi"))
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *Handler) CreateOfficial(ctx *gin.Context) {
 
 	var req CreateOfficialRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data official tidak valid"))
 		return
 	}
 
@@ -219,7 +219,7 @@ func (h *Handler) AdminUpdateUser(ctx *gin.Context) {
 
 	var req AdminUpdateUserRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data perubahan user tidak valid"))
 		return
 	}
 
@@ -252,7 +252,7 @@ func (h *Handler) RegisterWithKRS(ctx *gin.Context) {
 	var payload RegisterWithKRSRequest
 	if err := ctx.ShouldBind(&payload); err != nil {
 		log.Printf("error binding krs registration payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("Payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data pendaftaran KRS tidak valid. Periksa email dan password"))
 		return
 	}
 

@@ -87,6 +87,8 @@ type LetterType struct {
 	Name        string `gorm:"size:100;not null"`
 	Description string `gorm:"type:text"`
 
+	AttachmentRequirements datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'"`
+
 	Letters []Letter
 }
 

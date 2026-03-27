@@ -2,6 +2,7 @@ package errs
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -90,9 +91,15 @@ func InternalServerError(message string) MessageError {
 func HandlerError(ctx *gin.Context, err error) {
 	var messageErr MessageError
 	if errors.As(err, &messageErr) {
+		if messageErr.Status() >= http.StatusInternalServerError {
+			log.Printf("internal error: method=%s path=%s status=%d err=%v", ctx.Request.Method, ctx.FullPath(), messageErr.Status(), err)
+			ctx.JSON(http.StatusInternalServerError, InternalServerError("Terjadi gangguan pada server. Silakan coba lagi."))
+			return
+		}
 		ctx.JSON(messageErr.Status(), messageErr)
 		return
 	}
 	_ = ctx.Error(err).SetType(gin.ErrorTypePrivate) // record internal error
-	ctx.JSON(http.StatusInternalServerError, InternalServerError("Internal Server Error"))
+	log.Printf("unhandled error: method=%s path=%s err=%v", ctx.Request.Method, ctx.FullPath(), err)
+	ctx.JSON(http.StatusInternalServerError, InternalServerError("Terjadi gangguan pada server. Silakan coba lagi."))
 }

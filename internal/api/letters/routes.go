@@ -16,4 +16,7 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	r.DELETE("/template/:id", middleware.MiddlewareRole("ADMIN"), handler.DeleteTemplate)
 	r.GET("/templates", handler.GetAllTemplates)
 	r.GET("/preview/:id", handler.PreviewTemplate)
+
+	r.GET("/requirements/:id", handler.GetAttachmentRequirements)
+	r.PUT("/requirements/:id", middleware.MiddlewareRole("ADMIN"), handler.UpdateAttachmentRequirements)
 }

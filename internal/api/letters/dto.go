@@ -1,9 +1,36 @@
 package letters
 
 import (
+	"encoding/json"
 	"mime/multipart"
 	"time"
 )
+
+type AttachmentRequirement struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Required bool   `json:"required"`
+	Accept   string `json:"accept,omitempty"` // e.g. "application/pdf,image/*"
+}
+
+type UpdateAttachmentRequirementsRequest struct {
+	Requirements []AttachmentRequirement `json:"requirements" binding:"required"`
+}
+
+type LetterTypeRequirementsResponse struct {
+	LetterTypeID uint                    `json:"letter_type_id"`
+	Code         string                  `json:"code"`
+	Name         string                  `json:"name"`
+	Requirements []AttachmentRequirement `json:"requirements"`
+}
+
+func (r LetterTypeRequirementsResponse) MarshalJSON() ([]byte, error) {
+	type Alias LetterTypeRequirementsResponse
+	if r.Requirements == nil {
+		r.Requirements = []AttachmentRequirement{}
+	}
+	return json.Marshal(Alias(r))
+}
 
 type UploadTemplateRequest struct {
 	File *multipart.FileHeader `form:"file" binding:"required"`

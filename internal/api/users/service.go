@@ -2,7 +2,6 @@ package user
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -33,11 +32,15 @@ func NewService(repo *Repository) *Service {
 func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 	user, err := s.Repo.GetByEmail(strings.TrimSpace(payload.Email))
 	if err != nil {
-		return nil, errs.Unauthorized("Email atau Password Salah")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.Unauthorized("Email atau password salah")
+		}
+		log.Printf("error fetching user by email during login: email=%q err=%v", strings.TrimSpace(payload.Email), err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	if !helpers.CheckPasswordHash(payload.Password, user.Password) {
-		return nil, errs.Unauthorized("Email atau Password Salah")
+		return nil, errs.Unauthorized("Email atau password salah")
 	}
 
 	if err := s.ensureLoginEligibility(user); err != nil {
@@ -69,10 +72,16 @@ func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipart.FileHeader) (*Response, error) {
 	if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
 		return nil, errs.BadRequest("NIM sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking NIM uniqueness: nim=%q err=%v", payload.NIM, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking email uniqueness: email=%q err=%v", payload.Email, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
@@ -208,7 +217,11 @@ func (s *Service) GetAllUsers() (*Response, error) {
 func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Response, error) {
 	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
-		return nil, errs.NotFound("user tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user by id for update: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	updates := map[string]any{}
@@ -267,7 +280,11 @@ func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Res
 
 func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 	if _, err := s.Repo.GetUserByID(s.Repo.DB, userID); err != nil {
-		return nil, errs.NotFound("user tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user by id for delete: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	if err := s.Repo.DeleteUser(s.Repo.DB, userID); err != nil {
@@ -285,7 +302,7 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStudentRequest) (*Response, error) {
 	var kredensialPath string
 
-	fmt.Printf("approving student %d by admin %d with req: %+v\n", studentID, adminID, req) // debug log
+	log.Printf("approving student: student_id=%d admin_id=%d payload_present=%t", studentID, adminID, req != nil)
 	err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		student, err := s.resolvePendingStudentTx(tx, studentID)
 		if err != nil {
@@ -380,7 +397,11 @@ func (s *Service) RejectStudent(studentID uint, adminID uint, reason string) (*R
 func (s *Service) GetMe(userID uint) (*Response, error) {
 	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
-		return nil, errs.NotFound("user tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching profile user: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	isStudent := false
@@ -416,7 +437,11 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		if student == nil {
 			student, err = s.Repo.GetStudentByUserID(s.Repo.DB, usr.ID)
 			if err != nil {
-				return nil, errs.NotFound("data mahasiswa tidak ditemukan")
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, errs.NotFound("Data mahasiswa tidak ditemukan")
+				}
+				log.Printf("error fetching student profile: user_id=%d err=%v", usr.ID, err)
+				return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 			}
 		}
 
@@ -460,7 +485,11 @@ func (s *Service) VerifyEmail(req VerifyEmailRequest) (*Response, error) {
 
 	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
-		return nil, errs.NotFound("user tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user for email verification: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 	if !strings.EqualFold(strings.TrimSpace(usr.Email), strings.TrimSpace(email)) {
 		return nil, errs.BadRequest("Token verifikasi tidak sesuai")
@@ -481,7 +510,11 @@ func (s *Service) VerifyEmail(req VerifyEmailRequest) (*Response, error) {
 func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Response, error) {
 	usr, err := s.Repo.GetByEmail(strings.TrimSpace(req.Email))
 	if err != nil {
-		return nil, errs.NotFound("user tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user for resend verification: email=%q err=%v", strings.TrimSpace(req.Email), err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	if usr.EmailVerifiedAt != nil {
@@ -499,6 +532,9 @@ func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Respo
 func (s *Service) CreateOfficial(adminID uint, req CreateOfficialRequest) (*Response, error) {
 	if _, err := s.Repo.GetByEmail(req.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking official email uniqueness: email=%q err=%v", req.Email, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	hashedPwd, err := helpers.HashPassword(req.Password)
@@ -508,7 +544,11 @@ func (s *Service) CreateOfficial(adminID uint, req CreateOfficialRequest) (*Resp
 
 	role, err := s.Repo.GetRoleByCode(s.Repo.DB, req.RoleCode)
 	if err != nil {
-		return nil, errs.BadRequest("Role official tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.BadRequest("Role official tidak ditemukan")
+		}
+		log.Printf("error fetching official role: role=%q err=%v", req.RoleCode, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	user := &migration.User{
@@ -554,6 +594,9 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 	// Check e-mail uniqueness early so we don't waste OCR quota
 	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking KRS registration email uniqueness: email=%q err=%v", payload.Email, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	// Save the uploaded image
@@ -586,6 +629,10 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 	if _, err := s.Repo.GetByNIM(krsData.NIM); err == nil {
 		os.Remove(filePath)
 		return nil, errs.BadRequest("NIM sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		os.Remove(filePath)
+		log.Printf("error checking KRS registration NIM uniqueness: nim=%q err=%v", krsData.NIM, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	// Hash password
@@ -649,7 +696,11 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 func (s *Service) resolvePendingStudentTx(tx *gorm.DB, studentID uint) (*migration.Student, error) {
 	student, err := s.Repo.GetStudentByID(tx, studentID)
 	if err != nil {
-		return nil, errs.NotFound("mahasiswa tidak ditemukan")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("Mahasiswa tidak ditemukan")
+		}
+		log.Printf("error fetching student by id: student_id=%d err=%v", studentID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
 	if strings.ToLower(strings.TrimSpace(student.AdminVerificationStatus)) != "pending" {
@@ -692,7 +743,11 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 		if user.Student == nil {
 			student, err := s.Repo.GetStudentByUserID(s.Repo.DB, user.ID)
 			if err != nil {
-				return errs.Unauthorized("Data mahasiswa tidak ditemukan")
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errs.Unauthorized("Data mahasiswa tidak ditemukan")
+				}
+				log.Printf("error fetching student data for login eligibility: user_id=%d err=%v", user.ID, err)
+				return errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 			}
 			user.Student = student
 		}
@@ -705,6 +760,7 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 	if isOfficial {
 		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, user.ID)
 		if err != nil {
+			log.Printf("error fetching official data for login eligibility: user_id=%d err=%v", user.ID, err)
 			return errs.InternalServerError("Gagal memvalidasi status official")
 		}
 		if err := policy.CanOfficialAct(user, official); err != nil {

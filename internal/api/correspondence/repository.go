@@ -53,6 +53,10 @@ func (r *Repository) CreateApproval(tx *gorm.DB, approval *migration.LetterAppro
 	return nil
 }
 
+func (r *Repository) CreateAttachment(tx *gorm.DB, att *migration.LetterAttachment) error {
+	return tx.Create(att).Error
+}
+
 func (r *Repository) GetApprovalByLetterID(tx *gorm.DB, letterID uint) (*migration.LetterApproval, error) {
 	var approval migration.LetterApproval
 	if err := tx.Where("letter_id = ?", letterID).First(&approval).Error; err != nil {

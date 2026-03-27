@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -30,7 +30,7 @@ func MiddlewareAuth(ctx *gin.Context) {
 	if bearerToken == "" {
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
 			StatusCode: http.StatusUnauthorized,
-			Message:    "Authorization header is required",
+			Message:    "Header Authorization wajib diisi",
 		})
 		ctx.Abort()
 		return
@@ -53,11 +53,11 @@ func MiddlewareAuth(ctx *gin.Context) {
 
 		// Cek apakah error-nya expired
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			errMsg = "Token has expired"
+			errMsg = "Sesi Anda sudah berakhir, silakan login kembali"
 		} else if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
-			errMsg = "Invalid token signature"
+			errMsg = "Token tidak valid"
 		} else {
-			errMsg = "Invalid or malformed token"
+			errMsg = "Token tidak valid atau format token salah"
 		}
 
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
@@ -78,7 +78,7 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 		if !exists {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, Response{
 				StatusCode: http.StatusUnauthorized,
-				Message:    "Unauthorized",
+				Message:    "Anda belum login",
 			})
 			return
 		}
@@ -92,10 +92,10 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 			}
 		}
 
-		fmt.Printf("User %d with roles %v attempted to access a resource requiring roles %v\n", claims.UserID, claims.Roles, requiredRoles)
+		log.Printf("access denied: user_id=%d user_roles=%v required_roles=%v", claims.UserID, claims.Roles, requiredRoles)
 		ctx.AbortWithStatusJSON(http.StatusForbidden, Response{
 			StatusCode: http.StatusForbidden,
-			Message:    "Forbidden: insufficient permissions",
+			Message:    "Anda tidak memiliki izin untuk mengakses resource ini",
 		})
 	}
 }
@@ -105,14 +105,14 @@ func MiddlewareRole(requiredRoles ...string) gin.HandlerFunc {
 func parseAuthHeader(header string) (string, string) {
 	header = strings.TrimSpace(header)
 	if header == "" {
-		return "", "Authorization header is required"
+		return "", "Header Authorization wajib diisi"
 	}
 
 	lower := strings.ToLower(header)
 	if strings.HasPrefix(lower, "bearer ") {
 		token := strings.TrimSpace(header[7:])
 		if token == "" {
-			return "", "Invalid token format"
+			return "", "Format token tidak valid"
 		}
 		return token, ""
 	}
@@ -121,7 +121,7 @@ func parseAuthHeader(header string) (string, string) {
 		return header, ""
 	}
 
-	return "", "Invalid token format"
+	return "", "Format token tidak valid"
 }
 
 func GetUserID(c *gin.Context) (uint, error) {

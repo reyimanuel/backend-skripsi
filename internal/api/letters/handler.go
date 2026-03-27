@@ -2,6 +2,7 @@ package letters
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -59,7 +60,7 @@ func (h *Handler) UploadTemplateFlexible(ctx *gin.Context) {
 
 	var req UploadTemplateFlexibleRequest
 	if err := ctx.ShouldBind(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("payload tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data upload template tidak valid"))
 		return
 	}
 
@@ -94,6 +95,7 @@ func (h *Handler) PreviewTemplate(ctx *gin.Context) {
 
 	file, err := os.Open(pdfPath)
 	if err != nil {
+		log.Printf("failed opening template preview: letter_type_id=%d path=%q err=%v", letterTypeID, pdfPath, err)
 		errs.HandlerError(ctx, errs.InternalServerError("Gagal membuka file"))
 		return
 	}
@@ -124,6 +126,47 @@ func (h *Handler) DeleteTemplate(ctx *gin.Context) {
 
 func (h *Handler) GetAllTemplates(ctx *gin.Context) {
 	response, err := h.Service.GetAllTemplates()
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) GetAttachmentRequirements(ctx *gin.Context) {
+	idParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("id tidak valid"))
+		return
+	}
+
+	response, err := h.Service.GetAttachmentRequirements(uint(letterTypeID))
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) UpdateAttachmentRequirements(ctx *gin.Context) {
+	// ADMIN-only via route middleware
+	idParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("id tidak valid"))
+		return
+	}
+
+	var req UpdateAttachmentRequirementsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data requirements tidak valid"))
+		return
+	}
+
+	response, err := h.Service.UpdateAttachmentRequirements(uint(letterTypeID), req)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
