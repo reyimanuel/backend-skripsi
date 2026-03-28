@@ -23,6 +23,7 @@ import (
 )
 
 const (
+	statusDraft     = "draft"
 	statusSubmitted = "submitted"
 	statusForwarded = "forwarded"
 	statusApproved  = "approved"
@@ -45,6 +46,7 @@ var blockedPayloadFields = map[string]struct{}{
 	"angkatan":      {},
 	"tanggal":       {},
 	"tahun_ajaran":  {},
+	"tujuan_surat":  {},
 	"nomor_surat":   {},
 	"official":      {},
 	"nip":           {},
@@ -116,40 +118,38 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool) (strin
 	return pdfPath, fileName, nil
 }
 
-func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Response, error) {
+func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Response, error) {
 	var letter *migration.Letter
 	var payloadMap map[string]any
-	var outputDocx string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		now := time.Now()
-
 		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
 		if err != nil {
-			return errs.Forbidden("Hanya mahasiswa yang dapat mengajukan surat")
+			return errs.Forbidden("Hanya mahasiswa yang dapat membuat draft surat")
 		}
 		if err := policy.CanStudentSubmitLetter(&student.User, student); err != nil {
 			return err
 		}
 
-		template, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID)
-		if err != nil {
+		tujuan := ""
+		if req.Payload != nil {
+			if raw, ok := req.Payload["tujuan"]; ok {
+				tujuan = strings.TrimSpace(fmt.Sprint(raw))
+			}
+		}
+		if tujuan == "" {
+			return errs.BadRequest("tujuan surat wajib diisi")
+		}
+
+		// Ensure template exists for the type (so we don't allow drafting unusable letters)
+		if _, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID); err != nil {
 			return errs.NotFound("Template surat tidak ditemukan")
 		}
 
-		payloadMap = buildSubmitPayload(req.Payload, now, helpers.GetCurrentAcademicYear())
-		data := buildTemplateData(student, payloadMap)
-
-		outputDocx = fmt.Sprintf("public/generated/letter_%d.docx", now.UnixNano())
-
-		if err := s.generateLetterDocument(template.FilePath, outputDocx, data); err != nil {
-			return err
-		}
-
+		payloadMap = buildSubmitPayload(req.Payload)
 		payloadJSON, err := marshalPayload(payloadMap)
 		if err != nil {
-			log.Printf("error marshaling payload: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
+			return errs.InternalServerError("Terjadi kesalahan dalam membuat draft")
 		}
 
 		letter = &migration.Letter{
@@ -157,58 +157,41 @@ func (s *Service) CreateSubmitLetter(userID uint, req SubmitLetterRequest) (*Res
 			LetterTypeID: req.LetterTypeID,
 			Subject:      req.Subject,
 			Payload:      payloadJSON,
-			Status:       statusSubmitted,
-			FilePath:     outputDocx,
+			Status:       statusDraft,
+			FilePath:     "",
 		}
-
 		if err := s.Repo.CreateLetter(tx, letter); err != nil {
-			log.Printf("error creating letter submission: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan dalam membuat submisi surat")
+			log.Printf("error creating draft letter: %v", err)
+			return errs.InternalServerError("Terjadi kesalahan dalam membuat draft")
 		}
-
-		if err := s.Repo.CreateHistory(tx, &migration.LetterHistory{LetterID: letter.ID, ActorID: userID, Action: historySubmitted}); err != nil {
-			log.Printf("error creating letter history: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
-		}
-
-		adminRole, err := s.UsersRepo.GetRoleByCode(tx, "ADMIN")
-		if err != nil {
-			log.Printf("error getting admin role: %v", err)
-			return errs.InternalServerError("Gagal mendapatkan role admin")
-		}
-
-		if err := s.Repo.CreateApproval(tx, &migration.LetterApproval{LetterID: letter.ID, RoleID: adminRole.ID, Status: approvalPending}); err != nil {
-			log.Printf("error creating letter approval: %v", err)
-			return errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
-		}
-
 		return nil
 	})
-
 	if err != nil {
-		log.Printf("error creating letter submission: %v", err)
 		return nil, err
 	}
 
 	return &Response{
-		StatusCode: http.StatusOK,
-		Message:    "Surat berhasil dibuat",
+		StatusCode: http.StatusCreated,
+		Message:    "Draft surat berhasil dibuat",
 		Data: Data{
 			ID:           letter.ID,
 			LetterTypeID: letter.LetterTypeID,
 			Subject:      letter.Subject,
 			Status:       letter.Status,
 			Payload:      payloadMap,
-			FilePath:     helpers.ToAbsoluteURL(outputDocx),
-			PreviewURL:   helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
+			FilePath:     "",
+			PreviewURL:   "",
 			CreatedAt:    letter.CreatedAt,
 		},
 	}, nil
 }
 
-func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, files []*multipart.FileHeader) (*Response, error) {
+func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, files []*multipart.FileHeader, keys []string, defaultKey string) (*Response, error) {
 	if len(files) == 0 {
 		return nil, errs.BadRequest("file tidak ditemukan")
+	}
+	if len(keys) > 0 && len(keys) != len(files) {
+		return nil, errs.BadRequest("jumlah keys harus sama dengan jumlah files")
 	}
 
 	items := make([]AttachmentItem, 0, len(files))
@@ -228,9 +211,16 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 			}
 		}
 
-		for _, f := range files {
+		for idx, f := range files {
 			if f == nil {
 				continue
+			}
+			key := strings.TrimSpace(defaultKey)
+			if len(keys) > 0 {
+				key = strings.TrimSpace(keys[idx])
+			}
+			if key == "" {
+				return errs.BadRequest("key berkas wajib diisi")
 			}
 			newName := helpers.GenerateUniqueFileName(f.Filename)
 			newPath := filepath.Join("public", "generated", "attachments", fmt.Sprintf("letter_%d", letterID), newName)
@@ -246,17 +236,18 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 			}
 
 			att := &migration.LetterAttachment{
-				LetterID:   letterID,
-				FilePath:   filepath.ToSlash(newPath),
-				FileType:   mime,
-				UploadedAt: time.Now(),
+				LetterID:       letterID,
+				RequirementKey: key,
+				FilePath:       filepath.ToSlash(newPath),
+				FileType:       mime,
+				UploadedAt:     time.Now(),
 			}
 			if err := s.Repo.CreateAttachment(tx, att); err != nil {
 				_ = os.Remove(newPath)
 				return errs.InternalServerError("gagal menyimpan data berkas")
 			}
 
-			items = append(items, AttachmentItem{ID: att.ID, FilePath: helpers.ToAbsoluteURL(att.FilePath), FileType: att.FileType})
+			items = append(items, AttachmentItem{ID: att.ID, Key: att.RequirementKey, FilePath: helpers.ToAbsoluteURL(att.FilePath), FileType: att.FileType})
 		}
 
 		return nil
@@ -266,6 +257,142 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 	}
 
 	return &Response{StatusCode: http.StatusCreated, Message: "Berkas berhasil diupload", Data: UploadAttachmentsResponse{LetterID: letterID, Attachments: items}}, nil
+}
+
+type missingAttachmentsData struct {
+	Missing []string `json:"missing"`
+}
+
+func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, error) {
+	var previewURL string
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		now := time.Now()
+		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+		if err != nil {
+			return errs.Forbidden("Hanya mahasiswa yang dapat submit surat")
+		}
+		if err := policy.CanStudentSubmitLetter(&student.User, student); err != nil {
+			return err
+		}
+
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
+		if err != nil {
+			return errs.NotFound("Surat tidak ditemukan")
+		}
+		if letter.StudentID != student.ID {
+			return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+		}
+		if letter.Status != statusDraft {
+			return errs.BadRequest("Surat bukan draft")
+		}
+
+		// parse required keys from letter type
+		reqs, err := parseRequiredAttachmentKeys(letter.LetterType.AttachmentRequirements)
+		if err != nil {
+			log.Printf("invalid attachment requirements: letter_type_id=%d err=%v", letter.LetterTypeID, err)
+			return errs.InternalServerError("Konfigurasi requirements surat tidak valid")
+		}
+
+		if len(reqs) > 0 {
+			haveKeys, err := s.Repo.ListAttachmentKeysByLetterID(tx, letterID)
+			if err != nil {
+				return errs.InternalServerError("Gagal memeriksa berkas")
+			}
+			have := make(map[string]struct{}, len(haveKeys))
+			for _, k := range haveKeys {
+				have[strings.TrimSpace(k)] = struct{}{}
+			}
+			missing := make([]string, 0)
+			for _, k := range reqs {
+				if _, ok := have[k]; !ok {
+					missing = append(missing, k)
+				}
+			}
+			if len(missing) > 0 {
+				return errs.BadRequestWithData("Berkas wajib belum lengkap", missingAttachmentsData{Missing: missing})
+			}
+		}
+
+		template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
+		if err != nil {
+			return errs.NotFound("Template surat tidak ditemukan")
+		}
+
+		payloadMap, err := unmarshalPayload(letter.Payload)
+		if err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
+		}
+
+		tujuan := ""
+		if raw, ok := payloadMap["tujuan"]; ok {
+			tujuan = strings.TrimSpace(fmt.Sprint(raw))
+		}
+		if tujuan != "" {
+			payloadMap["tujuan_surat"] = tujuan
+		}
+		payloadMap["tanggal"] = helpers.FormatIndonesianDate(now)
+		payloadMap["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
+
+		data := buildTemplateData(student, payloadMap)
+
+		outputDocx := fmt.Sprintf("public/generated/letter_%d.docx", now.UnixNano())
+		if err := s.generateLetterDocument(template.FilePath, outputDocx, data); err != nil {
+			return err
+		}
+
+		letter.Status = statusSubmitted
+		letter.FilePath = outputDocx
+		if err := s.Repo.SaveLetter(tx, letter); err != nil {
+			return errs.InternalServerError("Gagal menyimpan surat")
+		}
+
+		if err := s.Repo.CreateHistory(tx, &migration.LetterHistory{LetterID: letter.ID, ActorID: userID, Action: historySubmitted}); err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
+		}
+
+		adminRole, err := s.UsersRepo.GetRoleByCode(tx, "ADMIN")
+		if err != nil {
+			return errs.InternalServerError("Gagal mendapatkan role admin")
+		}
+		if err := s.Repo.CreateApproval(tx, &migration.LetterApproval{LetterID: letter.ID, RoleID: adminRole.ID, Status: approvalPending}); err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam membuat surat")
+		}
+
+		previewURL = helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil disubmit", Data: PreviewResponse{ID: letterID, PreviewURL: previewURL}}, nil
+}
+
+func parseRequiredAttachmentKeys(raw datatypes.JSON) ([]string, error) {
+	if len(raw) == 0 {
+		return []string{}, nil
+	}
+	var items []struct {
+		Key      string `json:"key"`
+		Required bool   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, it := range items {
+		k := strings.TrimSpace(it.Key)
+		if !it.Required || k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out, nil
 }
 
 func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
@@ -493,8 +620,9 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
-func (s *Service) GetLetterHistory(letterID uint, userID uint, isAdmin bool) (*Response, error) {
+func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool) (*Response, error) {
 	var out []LetterHistoryItem
+	var detail LetterHistoryDetail
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
@@ -521,6 +649,38 @@ func (s *Service) GetLetterHistory(letterID uint, userID uint, isAdmin bool) (*R
 			return errs.InternalServerError("Gagal mengambil riwayat surat")
 		}
 
+		atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
+		if err != nil {
+			log.Printf("error fetching attachments: letter_id=%d err=%v", letterID, err)
+			return errs.InternalServerError("Gagal mengambil data berkas")
+		}
+		items := make([]AttachmentItem, 0, len(atts))
+		for _, a := range atts {
+			items = append(items, AttachmentItem{
+				ID:       a.ID,
+				Key:      strings.TrimSpace(a.RequirementKey),
+				FilePath: helpers.ToAbsoluteURL(a.FilePath),
+				FileType: a.FileType,
+			})
+		}
+
+		payloadMap, err := unmarshalPayload(letter.Payload)
+		if err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
+		}
+
+		detail = LetterHistoryDetail{
+			ID:           letter.ID,
+			LetterTypeID: letter.LetterTypeID,
+			Subject:      letter.Subject,
+			Status:       letter.Status,
+			Payload:      payloadMap,
+			Attachments:  items,
+			PreviewURL:   helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
+			CreatedAt:    letter.CreatedAt,
+			UpdatedAt:    letter.UpdatedAt,
+		}
+
 		out = make([]LetterHistoryItem, 0, len(histories))
 		for _, h := range histories {
 			var actor *HistoryActor
@@ -542,7 +702,7 @@ func (s *Service) GetLetterHistory(letterID uint, userID uint, isAdmin bool) (*R
 		return nil, err
 	}
 
-	return &Response{StatusCode: http.StatusOK, Message: "Riwayat surat berhasil diambil", Data: out}, nil
+	return &Response{StatusCode: http.StatusOK, Message: "Riwayat surat berhasil diambil", Data: LetterHistoryAndDetailData{Letter: detail, Histories: out}}, nil
 }
 
 func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*Response, error) {
@@ -740,11 +900,8 @@ func copyPayload(payload map[string]any, blocked map[string]struct{}) map[string
 	return cloned
 }
 
-func buildSubmitPayload(payload map[string]any, generatedAt time.Time, academicYear string) map[string]any {
-	enriched := copyPayload(payload, blockedPayloadFields)
-	enriched["tanggal"] = helpers.FormatIndonesianDate(generatedAt)
-	enriched["tahun_ajaran"] = academicYear
-	return enriched
+func buildSubmitPayload(payload map[string]any) map[string]any {
+	return copyPayload(payload, blockedPayloadFields)
 }
 
 func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNumber string, official *migration.Official) map[string]any {

@@ -57,6 +57,30 @@ func (r *Repository) CreateAttachment(tx *gorm.DB, att *migration.LetterAttachme
 	return tx.Create(att).Error
 }
 
+func (r *Repository) GetLetterWithTypeByID(tx *gorm.DB, letterID uint) (*migration.Letter, error) {
+	var letter migration.Letter
+	if err := tx.Preload("LetterType").Where("id = ?", letterID).First(&letter).Error; err != nil {
+		return nil, err
+	}
+	return &letter, nil
+}
+
+func (r *Repository) ListAttachmentKeysByLetterID(tx *gorm.DB, letterID uint) ([]string, error) {
+	var keys []string
+	if err := tx.Model(&migration.LetterAttachment{}).
+		Where("letter_id = ?", letterID).
+		Where("requirement_key <> ''").
+		Distinct().
+		Pluck("requirement_key", &keys).Error; err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (r *Repository) SaveLetter(tx *gorm.DB, letter *migration.Letter) error {
+	return tx.Save(letter).Error
+}
+
 func (r *Repository) GetApprovalByLetterID(tx *gorm.DB, letterID uint) (*migration.LetterApproval, error) {
 	var approval migration.LetterApproval
 	if err := tx.Where("letter_id = ?", letterID).First(&approval).Error; err != nil {

@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-type SubmitLetterRequest struct {
+type CreateDraftRequest struct {
 	LetterTypeID uint           `json:"letter_type_id" binding:"required"`
 	Subject      string         `json:"subject" binding:"required"`
 	Payload      map[string]any `json:"payload" binding:"required"`
@@ -34,6 +34,7 @@ type Response struct {
 
 type AttachmentItem struct {
 	ID       uint   `json:"id"`
+	Key      string `json:"key,omitempty"`
 	FilePath string `json:"file_path"`
 	FileType string `json:"file_type,omitempty"`
 }
@@ -60,6 +61,23 @@ type LetterHistoryItem struct {
 	Notes     string        `json:"notes"`
 	Actor     *HistoryActor `json:"actor,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
+}
+
+type LetterHistoryDetail struct {
+	ID           uint             `json:"id"`
+	LetterTypeID uint             `json:"letter_type_id"`
+	Subject      string           `json:"subject"`
+	Status       string           `json:"status"`
+	Payload      map[string]any   `json:"payload"`
+	Attachments  []AttachmentItem `json:"attachments"`
+	PreviewURL   string           `json:"preview_url"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+}
+
+type LetterHistoryAndDetailData struct {
+	Letter    LetterHistoryDetail `json:"letter"`
+	Histories []LetterHistoryItem `json:"histories"`
 }
 
 type ListLettersQuery struct {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,26 +25,49 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{Service: service}
 }
 
-func (h *Handler) CreateSubmitLetter(ctx *gin.Context) {
+func (h *Handler) CreateDraftLetter(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
 		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
 		return
 	}
 
-	var req SubmitLetterRequest
+	var req CreateDraftRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("Data pengajuan surat tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Data draft surat tidak valid"))
 		return
 	}
 
-	response, err := h.Service.CreateSubmitLetter(userID, req)
+	response, err := h.Service.CreateDraftLetter(userID, req)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, response)
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) SubmitDraftLetter(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	letterIDParam := ctx.Param("id")
+	letterID, err := strconv.Atoi(letterIDParam)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("surat tidak valid"))
+		return
+	}
+
+	response, err := h.Service.SubmitDraftLetter(uint(letterID), userID)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
 }
 
 func (h *Handler) ApproveLetter(ctx *gin.Context) {
@@ -157,7 +181,7 @@ func (h *Handler) DeleteLetter(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) GetLetterHistory(ctx *gin.Context) {
+func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
 		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
@@ -183,7 +207,7 @@ func (h *Handler) GetLetterHistory(ctx *gin.Context) {
 		return
 	}
 
-	response, err := h.Service.GetLetterHistory(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"))
+	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"))
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -266,7 +290,14 @@ func (h *Handler) UploadAttachments(ctx *gin.Context) {
 		}
 	}
 
-	response, err := h.Service.UploadAttachments(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"), files)
+	// attachment key(s)
+	defaultKey := strings.TrimSpace(ctx.PostForm("key"))
+	keys := form.Value["keys"]
+	if len(keys) == 0 {
+		keys = form.Value["keys[]"]
+	}
+
+	response, err := h.Service.UploadAttachments(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"), files, keys, defaultKey)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

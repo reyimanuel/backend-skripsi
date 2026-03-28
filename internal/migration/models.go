@@ -161,6 +161,8 @@ type LetterAttachment struct {
 
 	LetterID uint `gorm:"not null"`
 
+	RequirementKey string `gorm:"column:requirement_key;size:50;not null;default:'';index"`
+
 	FilePath string `gorm:"size:255;not null"`
 	FileType string `gorm:"size:50"`
 

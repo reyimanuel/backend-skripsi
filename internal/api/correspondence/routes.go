@@ -14,10 +14,11 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.GET("/letters", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.ListLetters)
-	r.POST("/submit", middleware.MiddlewareRole("MAHASISWA"), handler.CreateSubmitLetter)
+	r.POST("/drafts", middleware.MiddlewareRole("MAHASISWA"), handler.CreateDraftLetter)
+	r.POST("/submit/:id", middleware.MiddlewareRole("MAHASISWA"), handler.SubmitDraftLetter)
 	r.DELETE("/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.DeleteLetter)
 	r.GET("/preview/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.PreviewLetter)
-	r.GET("/history/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.GetLetterHistory)
+	r.GET("/history/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.GetHistoryAndDetail)
 	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN"), handler.ApproveLetter)
-	r.POST("/:id/attachments", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.UploadAttachments)
+	r.POST("/attachments/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.UploadAttachments)
 }

@@ -24,6 +24,16 @@ type ErrorData struct {
 	ErrMessage string `json:"message"`
 }
 
+// ErrorDataWithPayload is like ErrorData but can include additional structured data.
+// Useful for validation responses (e.g. missing required fields) without changing
+// the global error response shape for other endpoints.
+type ErrorDataWithPayload struct {
+	ErrStatus  int    `json:"status"`
+	ErrError   string `json:"error"`
+	ErrMessage string `json:"message"`
+	Data       any    `json:"data,omitempty"`
+}
+
 // Status returns the status code of the response.
 func (e *ErrorData) Status() int {
 	return e.ErrStatus
@@ -39,6 +49,18 @@ func (e *ErrorData) Message() string {
 	return e.ErrMessage
 }
 
+func (e *ErrorDataWithPayload) Status() int {
+	return e.ErrStatus
+}
+
+func (e *ErrorDataWithPayload) Error() string {
+	return e.ErrError
+}
+
+func (e *ErrorDataWithPayload) Message() string {
+	return e.ErrMessage
+}
+
 // Client Error Responses (400s)
 // BadRequest returns a MessageError representing a 400 Bad Request error with a custom message.
 func BadRequest(message string) MessageError {
@@ -46,6 +68,16 @@ func BadRequest(message string) MessageError {
 		ErrStatus:  http.StatusBadRequest,
 		ErrError:   "Bad Request",
 		ErrMessage: message,
+	}
+}
+
+// BadRequestWithData returns a 400 Bad Request with extra payload.
+func BadRequestWithData(message string, data any) MessageError {
+	return &ErrorDataWithPayload{
+		ErrStatus:  http.StatusBadRequest,
+		ErrError:   "Bad Request",
+		ErrMessage: message,
+		Data:       data,
 	}
 }
 
