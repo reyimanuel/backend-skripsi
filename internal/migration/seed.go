@@ -42,6 +42,7 @@ func Seed(db *gorm.DB, force bool) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
 		photoPath := filepath.ToSlash(filepath.Join("public", "images", "profile-photos", "example.png"))
+		signaturePath := filepath.ToSlash(filepath.Join("public", "images", "signatures", "signatures.png"))
 
 		if err := tx.Exec(`
 			TRUNCATE TABLE 
@@ -148,7 +149,7 @@ func Seed(db *gorm.DB, force bool) error {
 			NIP:       "196501011990031001",
 			Pangkat:   "Pembina Utama",
 			Jabatan:   "Dekan",
-			Signature: "storage/signatures/dekan.png",
+			Signature: signaturePath,
 			IsOnDuty:  true,
 		}
 
@@ -157,15 +158,21 @@ func Seed(db *gorm.DB, force bool) error {
 			NIP:       "197001011995031002",
 			Pangkat:   "Pembina",
 			Jabatan:   "Wakil Dekan",
-			Signature: "storage/signatures/wakil.png",
+			Signature: signaturePath,
 			IsOnDuty:  true,
 		}
 
-		if err := tx.Create(&dekanOfficial).Error; err != nil {
-			return err
+		adminOfficial := Official{
+			UserID:    admin.ID,
+			NIP:       "198001012005011001",
+			Pangkat:   "Penata",
+			Jabatan:   "Admin Fakultas",
+			Signature: signaturePath,
+			IsOnDuty:  true,
 		}
 
-		if err := tx.Create(&wakilOfficial).Error; err != nil {
+		officials := []Official{dekanOfficial, wakilOfficial, adminOfficial}
+		if err := tx.Create(&officials).Error; err != nil {
 			return err
 		}
 
@@ -174,11 +181,6 @@ func Seed(db *gorm.DB, force bool) error {
 				Code:        "SURAT_AKTIF",
 				Name:        "Surat Keterangan Aktif Kuliah",
 				Description: "Digunakan untuk keperluan administrasi mahasiswa",
-			},
-			{
-				Code:        "SURAT_PENELITIAN",
-				Name:        "Surat Izin Penelitian",
-				Description: "Digunakan untuk keperluan penelitian",
 			},
 		}
 

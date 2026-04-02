@@ -7,6 +7,14 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 // RegisterStudentRequest is received as multipart/form-data.
 // kredensial (bukti gambar KTM/KRS) is handled separately via ctx.FormFile("kredensial").
 type RegisterStudentRequest struct {
@@ -144,5 +152,12 @@ type AdminUpdateUserRequest struct {
 	Name         *string `json:"name,omitempty"`
 	Email        *string `json:"email,omitempty" binding:"omitempty,email"`
 	IsActive     *bool   `json:"is_active,omitempty"`
+	ProfilePhoto *string `json:"profile_photo,omitempty"`
+}
+
+// UpdateMyProfileRequest allows a user to update their own profile.
+// Only name and profile_photo can be updated by the user themselves.
+type UpdateMyProfileRequest struct {
+	Name         *string `json:"name,omitempty"`
 	ProfilePhoto *string `json:"profile_photo,omitempty"`
 }

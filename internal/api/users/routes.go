@@ -13,11 +13,14 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	// Public routes
 	r.POST("/login", handler.Login)
+	r.POST("/refresh", handler.RefreshToken)
 	r.POST("/register", handler.RegisterStudent)
 	r.POST("/register/krs", handler.RegisterWithKRS)
 	r.POST("/verify-email", handler.VerifyEmail)
 	r.POST("/resend-verification", handler.ResendVerificationEmail)
+	r.POST("/logout", middleware.MiddlewareAuth, handler.Logout)
 	r.GET("/me", middleware.MiddlewareAuth, handler.GetMe)
+	r.PATCH("/me", middleware.MiddlewareAuth, handler.UpdateMyProfile)
 
 	// Admin-only routes
 	admin := r.Group("/", middleware.MiddlewareAuth, middleware.MiddlewareRole("ADMIN"))

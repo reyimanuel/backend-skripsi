@@ -74,6 +74,30 @@ func runVerificationRefactorMigration(db *gorm.DB) error {
 		fmt.Printf("⚠️  could not add students status check constraint (may already exist): %v\n", err)
 	}
 
+	// Normalize legacy official signature path to current public path.
+	if err := db.Exec(`
+		UPDATE officials
+		SET signature = 'public/images/signatures/signatures.png'
+		WHERE signature LIKE 'storage/signatures/%'
+	`).Error; err != nil {
+		fmt.Printf("⚠️  could not normalize official signature path: %v\n", err)
+	}
+
+	// Ensure every admin has an official row so admin appears in official section.
+	if err := db.Exec(`
+		INSERT INTO officials (user_id, nip, pangkat, jabatan, signature, is_active)
+		SELECT u.id, '198001012005011001', 'Penata', 'Admin Fakultas', 'public/images/signatures/signatures.png', TRUE
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE r.code = 'ADMIN'
+		  AND NOT EXISTS (
+			  SELECT 1 FROM officials o WHERE o.user_id = u.id
+		  )
+	`).Error; err != nil {
+		fmt.Printf("⚠️  could not backfill admin officials: %v\n", err)
+	}
+
 	return nil
 }
 

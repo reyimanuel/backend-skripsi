@@ -36,6 +36,49 @@ func (h *Handler) Login(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) RefreshToken(ctx *gin.Context) {
+	var req RefreshTokenRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Refresh token tidak valid"))
+		return
+	}
+
+	response, err := h.Service.RefreshToken(req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) Logout(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var req LogoutRequest
+	var reqPtr *LogoutRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		if !errors.Is(err, io.EOF) {
+			errs.HandlerError(ctx, errs.BadRequest("Data logout tidak valid"))
+			return
+		}
+	} else {
+		reqPtr = &req
+	}
+
+	response, err := h.Service.Logout(userID, reqPtr)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) RegisterStudent(ctx *gin.Context) {
 	var payload RegisterStudentRequest
 	if err := ctx.ShouldBind(&payload); err != nil {
@@ -263,6 +306,28 @@ func (h *Handler) RegisterWithKRS(ctx *gin.Context) {
 	}
 
 	response, err := h.Service.RegisterWithKRS(&payload, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) UpdateMyProfile(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var req UpdateMyProfileRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data profil tidak valid"))
+		return
+	}
+
+	response, err := h.Service.UpdateMyProfile(userID, req)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

@@ -69,6 +69,65 @@ func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 	}, nil
 }
 
+func (s *Service) RefreshToken(req RefreshTokenRequest) (*Response, error) {
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+	userID, err := token.ValidateRefreshToken(refreshToken)
+	if err != nil {
+		return nil, errs.Unauthorized("Refresh token tidak valid")
+	}
+
+	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.Unauthorized("Refresh token tidak valid")
+		}
+		log.Printf("error fetching user by id during refresh: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+
+	if err := s.ensureLoginEligibility(user); err != nil {
+		return nil, err
+	}
+
+	access, err := token.GenerateToken(user.ID, user.Email, user.RoleSlice())
+	if err != nil {
+		log.Printf("error saat membuat access token pada refresh: %v", err)
+		return nil, errs.InternalServerError("Gagal membuat akses token")
+	}
+
+	refresh, err := token.GenerateRefreshToken(user.ID)
+	if err != nil {
+		log.Printf("error saat membuat refresh token baru: %v", err)
+		return nil, errs.InternalServerError("Gagal membuat refresh token")
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "Token berhasil diperbarui",
+		Data: TokenResponse{
+			AccessToken:  access,
+			RefreshToken: refresh,
+		},
+	}, nil
+}
+
+func (s *Service) Logout(userID uint, req *LogoutRequest) (*Response, error) {
+	if req != nil {
+		refreshToken := strings.TrimSpace(req.RefreshToken)
+		if refreshToken != "" {
+			tokenUserID, err := token.ValidateRefreshToken(refreshToken)
+			if err != nil {
+				return nil, errs.Unauthorized("Refresh token tidak valid")
+			}
+			if tokenUserID != userID {
+				return nil, errs.Forbidden("Refresh token bukan milik user ini")
+			}
+		}
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Logout berhasil"}, nil
+}
+
 func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipart.FileHeader) (*Response, error) {
 	if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
 		return nil, errs.BadRequest("NIM sudah terdaftar")
@@ -689,6 +748,43 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 			Angkatan:     krsData.Angkatan,
 		},
 	}, nil
+}
+
+// UpdateMyProfile allows a user to update their own profile (name and profile_photo).
+func (s *Service) UpdateMyProfile(userID uint, req UpdateMyProfileRequest) (*Response, error) {
+	_, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user by id for profile update: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+
+	updates := map[string]any{}
+
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			return nil, errs.BadRequest("nama tidak boleh kosong")
+		}
+		updates["name"] = name
+	}
+
+	if req.ProfilePhoto != nil {
+		updates["profile_photo"] = strings.TrimSpace(*req.ProfilePhoto)
+	}
+
+	if len(updates) == 0 {
+		return nil, errs.BadRequest("tidak ada data yang diupdate")
+	}
+
+	if err := s.Repo.UpdateUserFields(s.Repo.DB, userID, updates); err != nil {
+		log.Printf("error updating user profile: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Gagal memperbarui profil")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diperbarui"}, nil
 }
 
 // helper functions
