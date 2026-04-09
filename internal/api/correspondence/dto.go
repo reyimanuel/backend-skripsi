@@ -47,6 +47,7 @@ type UploadAttachmentsResponse struct {
 type ApproveLetterRequest struct {
 	Action       string `json:"action" binding:"required,oneof=approve reject forward"`
 	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan
+	LetterNumber string `json:"letter_number"`
 	Notes        string `json:"notes"`
 }
 

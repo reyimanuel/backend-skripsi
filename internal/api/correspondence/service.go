@@ -448,17 +448,23 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			approval.ApprovedAt = &now
 
 		case "approve":
+			nomorSurat := strings.TrimSpace(req.LetterNumber)
+			if nomorSurat == "" {
+				return errs.BadRequest("Nomor surat wajib diisi saat approve")
+			}
+
+			used, err := s.Repo.IsLetterNumberUsed(tx, nomorSurat, letter.ID)
+			if err != nil {
+				return errs.InternalServerError("Gagal memvalidasi nomor surat")
+			}
+			if used {
+				return errs.BadRequest("Nomor surat sudah digunakan")
+			}
+
 			official, err := s.resolveOfficial(tx, req.SignedByRole)
 			if err != nil {
 				return err
 			}
-
-			sequence, err := s.Repo.CountApprovedThisYear(tx)
-			if err != nil {
-				return errs.InternalServerError("Gagal generate nomor surat")
-			}
-
-			nomorSurat := helpers.GenerateLetterNumber(sequence + 1)
 
 			student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
 			if err != nil {
@@ -860,10 +866,19 @@ func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.
 		return nil, errs.BadRequest("Penandatangan wajib dipilih")
 	}
 
-	official, err := s.UsersRepo.GetActiveOfficialByRole(tx, signedByRole)
+	// Only allow letter signers to be Dean / Vice Dean.
+	// We accept a few client variants (case-insensitive, underscores/spaces).
+	normalized := strings.ToLower(strings.TrimSpace(signedByRole))
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	if normalized != "dekan" && normalized != "wakil dekan" {
+		return nil, errs.BadRequest("Penandatangan hanya boleh Dekan atau Wakil Dekan")
+	}
+
+	official, err := s.UsersRepo.GetActiveOfficialByRole(tx, normalized)
 	if err != nil {
-		log.Printf("official not found: jabatan=%q err=%v", signedByRole, err)
-		return nil, errs.NotFound("Pejabat dengan jabatan '" + signedByRole + "' tidak ditemukan atau tidak aktif")
+		log.Printf("official not found: jabatan=%q err=%v", normalized, err)
+		return nil, errs.NotFound("Pejabat dengan jabatan '" + normalized + "' tidak ditemukan atau tidak aktif")
 	}
 
 	if err := policy.CanOfficialAct(&official.User, official); err != nil {

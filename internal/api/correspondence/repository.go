@@ -120,6 +120,19 @@ func (r *Repository) CountApprovedThisYear(tx *gorm.DB) (int64, error) {
 	return count, err
 }
 
+func (r *Repository) IsLetterNumberUsed(tx *gorm.DB, letterNumber string, excludeLetterID uint) (bool, error) {
+	var count int64
+	query := tx.Model(&migration.Letter{}).
+		Where("LOWER(letter_number) = LOWER(?)", strings.TrimSpace(letterNumber))
+	if excludeLetterID != 0 {
+		query = query.Where("id <> ?", excludeLetterID)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *Repository) GetAttachmentsByLetterID(tx *gorm.DB, letterID uint) ([]migration.LetterAttachment, error) {
 	var atts []migration.LetterAttachment
 	err := tx.Where("letter_id = ?", letterID).Find(&atts).Error
