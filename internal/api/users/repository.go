@@ -7,6 +7,7 @@ import (
 
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -179,4 +180,63 @@ func (r *Repository) GetOfficialByUserID(tx *gorm.DB, userID uint) (*migration.O
 	}
 
 	return &official, nil
+}
+
+func (r *Repository) UpsertUserDeviceToken(tx *gorm.DB, userID uint, token string, platform string, lastSeenAt time.Time) error {
+	item := &migration.UserDeviceToken{
+		UserID:     userID,
+		Token:      token,
+		Platform:   platform,
+		RevokedAt:  false,
+		LastSentAt: &lastSeenAt,
+	}
+
+	// Upsert by unique token. If token already exists, re-attach it to this user
+	// (e.g. user re-login) and update platform + timestamps.
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "token"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"user_id":      userID,
+			"platform":     platform,
+			"revoked_at":   false,
+			"last_sent_at": lastSeenAt,
+			"updated_at":   lastSeenAt,
+		}),
+	}).Create(item).Error
+}
+
+func (r *Repository) DeleteUserDeviceToken(tx *gorm.DB, userID uint, token string) error {
+	return tx.Where("user_id = ? AND token = ?", userID, token).
+		Delete(&migration.UserDeviceToken{}).Error
+}
+
+func (r *Repository) ListActiveDeviceTokensByUserID(tx *gorm.DB, userID uint) ([]string, error) {
+	var tokens []string
+	err := tx.Model(&migration.UserDeviceToken{}).
+		Where("user_id = ?", userID).
+		Where("revoked_at = ?", false).
+		Where("token <> ''").
+		Pluck("token", &tokens).Error
+	if err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+func (r *Repository) UpdateDeviceTokensLastSentAt(tx *gorm.DB, tokens []string, sentAt time.Time) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	return tx.Model(&migration.UserDeviceToken{}).
+		Where("token IN ?", tokens).
+		Updates(map[string]any{"last_sent_at": sentAt, "updated_at": sentAt}).Error
+}
+
+func (r *Repository) RevokeDeviceTokens(tx *gorm.DB, tokens []string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	return tx.Model(&migration.UserDeviceToken{}).
+		Where("token IN ?", tokens).
+		Updates(map[string]any{"revoked_at": true, "updated_at": time.Now()}).Error
 }

@@ -161,3 +161,14 @@ type UpdateMyProfileRequest struct {
 	Name         *string `json:"name,omitempty"`
 	ProfilePhoto *string `json:"profile_photo,omitempty"`
 }
+
+// UpsertFCMTokenRequest registers or updates an FCM registration token for the current user.
+// FE (Next.js PWA / wrapped APK) should call this after login and whenever the token changes.
+type UpsertFCMTokenRequest struct {
+	Token    string `json:"token" binding:"required"`
+	Platform string `json:"platform" binding:"omitempty"` // e.g. "web", "android", "ios"
+}
+
+type DeleteFCMTokenRequest struct {
+	Token string `json:"token" binding:"required"`
+}

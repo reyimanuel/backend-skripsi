@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	config "github.com/reyimanuel/letter-administration/internal/infrastructures/config"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/database"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/fcm"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"gorm.io/gorm"
 )
@@ -27,6 +29,10 @@ func Run() {
 	}
 
 	token.Load()
+
+	if _, err := fcm.Init(context.Background(), cfg.FirebaseCredentials); err != nil {
+		log.Fatal("FCM init failed:", err)
+	}
 
 	// Connect to database
 	db, _, err := database.ConnectDB()

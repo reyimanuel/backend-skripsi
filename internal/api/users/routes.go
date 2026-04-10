@@ -21,6 +21,8 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	r.POST("/logout", middleware.MiddlewareAuth, handler.Logout)
 	r.GET("/me", middleware.MiddlewareAuth, handler.GetMe)
 	r.PATCH("/me", middleware.MiddlewareAuth, handler.UpdateMyProfile)
+	r.POST("/me/fcm-token", middleware.MiddlewareAuth, handler.UpsertFCMToken)
+	r.DELETE("/me/fcm-token", middleware.MiddlewareAuth, handler.DeleteFCMToken)
 
 	// Admin-only routes
 	admin := r.Group("/", middleware.MiddlewareAuth, middleware.MiddlewareRole("ADMIN"))

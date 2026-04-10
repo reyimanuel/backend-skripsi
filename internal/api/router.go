@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/reyimanuel/letter-administration/internal/api/correspondence"
 	"github.com/reyimanuel/letter-administration/internal/api/letters"
+	"github.com/reyimanuel/letter-administration/internal/api/notifications"
 	user "github.com/reyimanuel/letter-administration/internal/api/users"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
 
@@ -20,4 +21,5 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 
 	letters.RegisterRoutes(protected.Group("/letters"), db)
 	correspondence.RegisterRoutes(protected.Group("/correspondence"), db)
+	notifications.RegisterRoutes(protected.Group("/notifications"), db)
 }

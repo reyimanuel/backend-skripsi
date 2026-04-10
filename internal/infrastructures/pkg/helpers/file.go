@@ -17,6 +17,77 @@ import (
 	"github.com/google/uuid"
 )
 
+func findLibreOfficeBinary() (string, error) {
+	// Allow override via env so deployments can be configured.
+	if v := strings.TrimSpace(os.Getenv("LIBREOFFICE_BIN")); v != "" {
+		return v, nil
+	}
+	if v := strings.TrimSpace(os.Getenv("LIBREOFFICE_PATH")); v != "" {
+		return v, nil
+	}
+
+	candidates := []string{
+		`C:\Program Files\LibreOffice\program\soffice.com`,
+		`C:\Program Files\LibreOffice\program\soffice.exe`,
+		`C:\Program Files (x86)\LibreOffice\program\soffice.com`,
+		`C:\Program Files (x86)\LibreOffice\program\soffice.exe`,
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	// Last resort: rely on PATH.
+	if lp, err := exec.LookPath("soffice"); err == nil {
+		return lp, nil
+	}
+	if lp, err := exec.LookPath("soffice.com"); err == nil {
+		return lp, nil
+	}
+	if lp, err := exec.LookPath("soffice.exe"); err == nil {
+		return lp, nil
+	}
+
+	return "", fmt.Errorf("LibreOffice (soffice) not found; install LibreOffice or set LIBREOFFICE_BIN")
+}
+
+func withoutEnv(keys ...string) []string {
+	remove := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		remove[strings.ToUpper(strings.TrimSpace(k))] = struct{}{}
+	}
+
+	out := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		k := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			k = kv[:i]
+		}
+		if _, drop := remove[strings.ToUpper(k)]; drop {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+func pathToFileURL(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	abs = filepath.ToSlash(abs)
+	// Windows drive letter path => file:///C:/...
+	if len(abs) >= 2 && abs[1] == ':' {
+		return "file:///" + abs
+	}
+	if strings.HasPrefix(abs, "/") {
+		return "file://" + abs
+	}
+	return "file:///" + abs
+}
+
 func SaveUploadedFile(file *multipart.FileHeader, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -65,22 +136,35 @@ func ConvertDocxToPDF(inputPath string) (string, error) {
 	}
 
 	outputDir := filepath.Dir(absInput)
+	soffice, err := findLibreOfficeBinary()
+	if err != nil {
+		return "", err
+	}
+
+	// Use an isolated LibreOffice profile to avoid "profile in use" and to keep conversions deterministic.
+	profileDir := filepath.Join(os.TempDir(), "letter-administration", "libreoffice", uuid.New().String())
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		return "", err
+	}
 
 	cmd := exec.Command(
-		`C:\Program Files\LibreOffice\program\soffice.com`,
+		soffice,
 		"--headless",
 		"--nologo",
 		"--nolockcheck",
 		"--nodefault",
 		"--norestore",
+		"-env:UserInstallation="+pathToFileURL(profileDir),
 		"--convert-to", "pdf:writer_pdf_Export",
 		absInput,
 		"--outdir", outputDir,
 	)
+	cmd.Dir = filepath.Dir(soffice)
+	cmd.Env = withoutEnv("PYTHONHOME", "PYTHONPATH")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("convert failed: %v | %s", err, string(output))
+		return "", fmt.Errorf("libreoffice convert failed: %v | output: %s", err, string(output))
 	}
 
 	pdfPath := strings.TrimSuffix(absInput, filepath.Ext(absInput)) + ".pdf"
@@ -93,39 +177,8 @@ func ConvertDocxToPDF(inputPath string) (string, error) {
 }
 
 func ConvertToPDF(docxPath string) error {
-	absInput, err := filepath.Abs(docxPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
-	}
-
-	if _, err := os.Stat(absInput); err != nil {
-		return fmt.Errorf("source file not found: %w", err)
-	}
-
-	fmt.Println("Converting file:", absInput)
-
-	cmd := exec.Command(
-		`C:\Program Files\LibreOffice\program\soffice.com`,
-		"--headless",
-		"--nologo",
-		"--nolockcheck",
-		"--nodefault",
-		"--norestore",
-		"--convert-to", "pdf:writer_pdf_Export",
-		absInput,
-		"--outdir", filepath.Dir(absInput),
-	)
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("libreoffice convert failed: %w | output: %s", err, string(out))
-	}
-
-	absPDF := strings.TrimSuffix(absInput, filepath.Ext(absInput)) + ".pdf"
-	if _, err := os.Stat(absPDF); err != nil {
-		return fmt.Errorf("pdf tidak terbentuk setelah konversi: %w", err)
-	}
-	return nil
+	_, err := ConvertDocxToPDF(docxPath)
+	return err
 }
 
 func EnsurePDFPreview(docxPath string) (string, error) {

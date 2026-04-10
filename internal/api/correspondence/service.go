@@ -1,6 +1,7 @@
 package correspondence
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -265,12 +267,15 @@ type missingAttachmentsData struct {
 
 func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, error) {
 	var previewURL string
+	var studentName string
+	var letterSubject string
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		now := time.Now()
 		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
 		if err != nil {
 			return errs.Forbidden("Hanya mahasiswa yang dapat submit surat")
 		}
+		studentName = student.User.Name
 		if err := policy.CanStudentSubmitLetter(&student.User, student); err != nil {
 			return err
 		}
@@ -285,6 +290,7 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		if letter.Status != statusDraft {
 			return errs.BadRequest("Surat bukan draft")
 		}
+		letterSubject = letter.Subject
 
 		// parse required keys from letter type
 		reqs, err := parseRequiredAttachmentKeys(letter.LetterType.AttachmentRequirements)
@@ -333,6 +339,15 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		payloadMap["tanggal"] = helpers.FormatIndonesianDate(now)
 		payloadMap["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
 
+		// Persist the enriched payload so later steps (approve/history) can
+		// reuse the same computed fields.
+		payloadJSON, err := marshalPayload(payloadMap)
+		if err != nil {
+			log.Printf("error marshaling submit payload: %v", err)
+			return errs.InternalServerError("Terjadi kesalahan dalam memproses data surat")
+		}
+		letter.Payload = payloadJSON
+
 		data := buildTemplateData(student, payloadMap)
 
 		outputDocx := fmt.Sprintf("public/generated/letter_%d.docx", now.UnixNano())
@@ -363,6 +378,16 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Best-effort: notify admins about new submitted letter.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Surat Baru Disubmit", push.FormatAdminLetterBody(studentName, letterSubject), map[string]string{
+		"type":      "letter_submitted",
+		"letter_id": fmt.Sprint(letterID),
+	}); err != nil {
+		log.Printf("push admin notify (letter_submitted) failed: letter_id=%d err=%v", letterID, err)
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil disubmit", Data: PreviewResponse{ID: letterID, PreviewURL: previewURL}}, nil
@@ -407,6 +432,10 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 		message = "Surat berhasil diteruskan"
 	}
 
+	var studentUserID uint
+	var subject string
+	var resultingStatus string
+	var notificationNotes string
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		now := time.Now()
 
@@ -415,6 +444,14 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			log.Printf("letter not found: id=%d err=%v", letterID, err)
 			return errs.NotFound("Surat tidak ditemukan")
 		}
+		subject = letter.Subject
+
+		student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
+		if err != nil {
+			log.Printf("student not found for approval notify: id=%d err=%v", letter.StudentID, err)
+			return errs.NotFound("Data mahasiswa tidak ditemukan")
+		}
+		studentUserID = student.UserID
 
 		if letter.Status != statusSubmitted && letter.Status != statusForwarded {
 			return errs.BadRequest("Surat tidak dalam status yang dapat disetujui")
@@ -433,6 +470,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			approval.ApproverID = &userID
 			approval.Notes = req.Notes
 			approval.ApprovedAt = &now
+			notificationNotes = req.Notes
 
 		case "forward":
 			official, err := s.resolveOfficial(tx, req.SignedByRole)
@@ -446,6 +484,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			approval.ApproverID = &userID
 			approval.Notes = req.Notes
 			approval.ApprovedAt = &now
+			notificationNotes = req.Notes
 
 		case "approve":
 			nomorSurat := strings.TrimSpace(req.LetterNumber)
@@ -464,12 +503,6 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			official, err := s.resolveOfficial(tx, req.SignedByRole)
 			if err != nil {
 				return err
-			}
-
-			student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
-			if err != nil {
-				log.Printf("student not found: id=%d err=%v", letter.StudentID, err)
-				return errs.NotFound("Data mahasiswa tidak ditemukan")
 			}
 
 			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
@@ -507,6 +540,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			approval.ApproverID = &userID
 			approval.Notes = req.Notes
 			approval.ApprovedAt = &now
+			notificationNotes = req.Notes
 		}
 
 		if err := tx.Save(letter).Error; err != nil {
@@ -523,12 +557,48 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			return errs.InternalServerError("Terjadi kesalahan dalam mencatat riwayat surat")
 		}
 
+		resultingStatus = letter.Status
+
 		return nil
 	})
 
 	if err != nil {
 		log.Printf("error approving letter: %v", err)
 		return nil, err
+	}
+
+	// Best-effort: notify the letter owner about status changes.
+	if studentUserID != 0 {
+		title := "Status Surat Berubah"
+		body := fmt.Sprintf("Status surat '%s' berubah menjadi %s", subject, resultingStatus)
+		nType := "letter_status_changed"
+		switch req.Action {
+		case "approve":
+			title = "Surat Disetujui"
+			body = fmt.Sprintf("Surat '%s' telah disetujui", subject)
+			nType = "letter_approved"
+		case "reject":
+			title = "Surat Ditolak"
+			body = fmt.Sprintf("Surat '%s' ditolak", subject)
+			if strings.TrimSpace(notificationNotes) != "" {
+				body = body + ": " + strings.TrimSpace(notificationNotes)
+			}
+			nType = "letter_rejected"
+		case "forward":
+			title = "Surat Diteruskan"
+			body = fmt.Sprintf("Surat '%s' telah diteruskan", subject)
+			nType = "letter_forwarded"
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		if _, err := push.SendToUser(ctx, s.Repo.DB, studentUserID, title, body, map[string]string{
+			"type":      nType,
+			"letter_id": fmt.Sprint(letterID),
+			"status":    resultingStatus,
+		}); err != nil {
+			log.Printf("push student notify failed: letter_id=%d student_user_id=%d err=%v", letterID, studentUserID, err)
+		}
 	}
 
 	return &Response{
@@ -921,12 +991,30 @@ func buildSubmitPayload(payload map[string]any) map[string]any {
 
 func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNumber string, official *migration.Official) map[string]any {
 	enriched := copyPayload(payload, nil)
+
+	// Normalize tujuan field for templates that use tujuan_surat.
+	if raw, ok := enriched["tujuan_surat"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		if v, ok := enriched["tujuan"]; ok {
+			if tujuan := strings.TrimSpace(fmt.Sprint(v)); tujuan != "" {
+				enriched["tujuan_surat"] = tujuan
+			}
+		}
+	}
+
+	if raw, ok := enriched["tahun_ajaran"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		enriched["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
+	}
+
 	enriched["tanggal"] = helpers.FormatIndonesianDate(approvedAt)
 	enriched["nomor_surat"] = letterNumber
 	enriched["official"] = official.User.Name
 	enriched["nip"] = official.NIP
 	enriched["pangkat"] = official.Pangkat
 	enriched["jabatan"] = official.Jabatan
+
+	// Optional placeholders (template-dependent). Note: FillTemplate does text replacement only.
+	enriched["ttd"] = official.User.Name
+	enriched["signature"] = helpers.ToAbsoluteURL(official.Signature)
 	return enriched
 }
 

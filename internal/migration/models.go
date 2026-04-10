@@ -8,6 +8,7 @@ import (
 
 var Models = []any{
 	User{},
+	UserDeviceToken{},
 	Official{},
 	Role{},
 	UserRole{},
@@ -33,6 +34,19 @@ type User struct {
 
 	Roles   []Role   `gorm:"many2many:user_roles;"`
 	Student *Student `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+}
+
+type UserDeviceToken struct {
+	ID         uint       `gorm:"primaryKey"`
+	UserID     uint       `gorm:"not null;index"`
+	Token      string     `gorm:"size:512;uniqueIndex;not null"`
+	Platform   string     `gorm:"size:30;not null;default:web"` // e.g., "web", "android", "ios"
+	CreatedAt  time.Time  `gorm:"autoCreateTime"`
+	UpdatedAt  time.Time  `gorm:"autoUpdateTime"`
+	RevokedAt  bool       `gorm:"not null;default:false"` // kept for backward compatibility (acts as revoked flag)
+	LastSentAt *time.Time `gorm:"index"`                  // last seen / last updated timestamp
+
+	User User `gorm:"constraint:OnDelete:CASCADE;"`
 }
 
 type Official struct {

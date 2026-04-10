@@ -1,7 +1,9 @@
 package user
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
+	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
@@ -194,6 +197,17 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 
 	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
 		log.Printf("error sending verification email: %v", err)
+	}
+
+	// Best-effort: notify admins about new pending registration.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, payload.NIM), map[string]string{
+		"type":            "student_registered",
+		"student_user_id": fmt.Sprint(user.ID),
+		"nim":             strings.TrimSpace(payload.NIM),
+	}); err != nil {
+		log.Printf("push admin notify (student_registered) failed: user_id=%d err=%v", user.ID, err)
 	}
 
 	return &Response{
@@ -737,6 +751,17 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		log.Printf("error sending verification email for KRS registration: %v", err)
 	}
 
+	// Best-effort: notify admins about new pending registration.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, krsData.NIM), map[string]string{
+		"type":            "student_registered",
+		"student_user_id": fmt.Sprint(user.ID),
+		"nim":             strings.TrimSpace(krsData.NIM),
+	}); err != nil {
+		log.Printf("push admin notify (student_registered/krs) failed: user_id=%d err=%v", user.ID, err)
+	}
+
 	return &Response{
 		StatusCode: http.StatusCreated,
 		Message:    "Pendaftaran berhasil. Data diekstrak dari KRS. Silakan tunggu verifikasi admin.",
@@ -785,6 +810,40 @@ func (s *Service) UpdateMyProfile(userID uint, req UpdateMyProfileRequest) (*Res
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diperbarui"}, nil
+}
+
+func (s *Service) UpsertFCMToken(userID uint, req UpsertFCMTokenRequest) (*Response, error) {
+	tokenStr := strings.TrimSpace(req.Token)
+	if tokenStr == "" {
+		return nil, errs.BadRequest("token wajib diisi")
+	}
+
+	platform := strings.TrimSpace(req.Platform)
+	if platform == "" {
+		platform = "web"
+	}
+
+	now := time.Now()
+	if err := s.Repo.UpsertUserDeviceToken(s.Repo.DB, userID, tokenStr, platform, now); err != nil {
+		log.Printf("error upserting fcm token: user_id=%d platform=%q err=%v", userID, platform, err)
+		return nil, errs.InternalServerError("gagal menyimpan token notifikasi")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Token notifikasi berhasil disimpan"}, nil
+}
+
+func (s *Service) DeleteFCMToken(userID uint, req DeleteFCMTokenRequest) (*Response, error) {
+	tokenStr := strings.TrimSpace(req.Token)
+	if tokenStr == "" {
+		return nil, errs.BadRequest("token wajib diisi")
+	}
+
+	if err := s.Repo.DeleteUserDeviceToken(s.Repo.DB, userID, tokenStr); err != nil {
+		log.Printf("error deleting fcm token: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("gagal menghapus token notifikasi")
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Token notifikasi berhasil dihapus"}, nil
 }
 
 // helper functions

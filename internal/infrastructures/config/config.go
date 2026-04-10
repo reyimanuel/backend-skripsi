@@ -23,6 +23,7 @@ type AppConfigurationMap struct {
 	SendGrid             SendGridConfig // SendGrid configuration
 	EmailProvider        string         // Which email provider to use: "smtp" or any email provider
 	FrontEndURL          string         // FrontEndURL is the URL of the front-end application.
+	FirebaseCredentials  string         // Path to the Firebase credentials file.
 }
 
 // SMTPConfig holds SMTP configuration.
@@ -130,6 +131,11 @@ func Load() {
 		FrontEndURL = "http://localhost:3000"
 	}
 
+	FirebaseCredentials := os.Getenv("FIREBASE_CREDENTIALS")
+	if FirebaseCredentials == "" {
+		log.Fatalf("FIREBASE_CREDENTIALS environment variable is not set, check your .env file")
+	}
+
 	// Set global variable config
 	config = &AppConfigurationMap{
 		Port:                 port,
@@ -144,6 +150,7 @@ func Load() {
 		SendGrid:             SendGrid,
 		EmailProvider:        EmailProvider,
 		FrontEndURL:          FrontEndURL,
+		FirebaseCredentials:  FirebaseCredentials,
 	}
 }
 
