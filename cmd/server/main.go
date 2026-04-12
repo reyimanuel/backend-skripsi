@@ -44,6 +44,8 @@ func handleCLI() {
 		runMigrations(force)
 	case "migrate-only":
 		runMigrationsOnly()
+	case "seed":
+		runSeed(force)
 	case "reset":
 		if !force {
 			if blocked := guardLocalOnly(); blocked != "" {
@@ -56,6 +58,7 @@ func handleCLI() {
 		fmt.Println("Unknown command. Use:")
 		fmt.Println("  migrate [--force]")
 		fmt.Println("  migrate-only")
+		fmt.Println("  seed [--only=users|roles,users|all] [--truncate-all] [--force]")
 		fmt.Println("  reset [--force]")
 	}
 }
@@ -102,6 +105,40 @@ func runReset(force bool) {
 	fmt.Println("Database reset completed ✅")
 }
 
+func runSeed(force bool) {
+	db, _, err := database.ConnectDB()
+	if err != nil {
+		panic(err)
+	}
+
+	only := ""
+	if v, ok := getFlagValue("--only"); ok {
+		only = v
+	} else {
+		// Allow positional target: `seed users`
+		for _, a := range os.Args[2:] {
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			only = a
+			break
+		}
+	}
+	if only == "" {
+		only = "all"
+	}
+
+	targets, err := dbMigration.ParseSeedTargets(only)
+	if err != nil {
+		panic(err)
+	}
+	targets.TruncateAll = hasFlag("--truncate-all")
+
+	if err := dbMigration.SeedSelected(db, force, targets); err != nil {
+		panic(err)
+	}
+}
+
 func guardLocalOnly() string {
 	host := os.Getenv("DB_HOST")
 	if host != "localhost" && host != "127.0.0.1" {
@@ -115,4 +152,33 @@ func guardLocalOnly() string {
 
 func hasFlag(flag string) bool {
 	return slices.Contains(os.Args[2:], flag)
+}
+
+func getFlagValue(flag string) (string, bool) {
+	// Supports:
+	// - --only=value
+	// - --only value
+	args := os.Args[2:]
+	prefix := flag + "="
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, prefix) {
+			v := strings.TrimSpace(strings.TrimPrefix(a, prefix))
+			if v == "" {
+				return "", false
+			}
+			return v, true
+		}
+		if a == flag {
+			if i+1 >= len(args) {
+				return "", false
+			}
+			v := strings.TrimSpace(args[i+1])
+			if v == "" || strings.HasPrefix(v, "-") {
+				return "", false
+			}
+			return v, true
+		}
+	}
+	return "", false
 }

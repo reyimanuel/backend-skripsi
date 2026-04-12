@@ -66,34 +66,112 @@ func runVerificationRefactorMigration(db *gorm.DB) error {
 		return fmt.Errorf("failed backfilling student admin verification status: %w", err)
 	}
 
+	// Make the students status check constraint idempotent.
 	if err := db.Exec(`
-		ALTER TABLE students
-		ADD CONSTRAINT students_admin_verification_status_check
-		CHECK (admin_verification_status IN ('pending','approved','rejected'))
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conname = 'students_admin_verification_status_check'
+			) THEN
+				ALTER TABLE students
+				ADD CONSTRAINT students_admin_verification_status_check
+				CHECK (admin_verification_status IN ('pending','approved','rejected'));
+			END IF;
+		END $$;
 	`).Error; err != nil {
-		fmt.Printf("⚠️  could not add students status check constraint (may already exist): %v\n", err)
+		fmt.Printf("⚠️  could not ensure students status check constraint: %v\n", err)
+	}
+
+	// Some legacy schemas have a partial officials table (missing columns).
+	// Ensure core columns exist so later UPDATE/INSERT statements can run.
+	if err := db.Exec(`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.tables
+				WHERE table_name = 'officials'
+			) THEN
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'officials' AND column_name = 'nip'
+				) THEN
+					ALTER TABLE officials ADD COLUMN nip VARCHAR(50);
+				END IF;
+
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'officials' AND column_name = 'pangkat'
+				) THEN
+					ALTER TABLE officials ADD COLUMN pangkat VARCHAR(100);
+				END IF;
+
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'officials' AND column_name = 'jabatan'
+				) THEN
+					ALTER TABLE officials ADD COLUMN jabatan VARCHAR(100);
+				END IF;
+
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'officials' AND column_name = 'signature'
+				) THEN
+					ALTER TABLE officials ADD COLUMN signature VARCHAR(255);
+				END IF;
+
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'officials' AND column_name = 'is_active'
+				) THEN
+					ALTER TABLE officials ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+				END IF;
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		fmt.Printf("⚠️  could not ensure officials columns: %v\n", err)
 	}
 
 	// Normalize legacy official signature path to current public path.
 	if err := db.Exec(`
-		UPDATE officials
-		SET signature = 'public/images/signatures/signatures.png'
-		WHERE signature LIKE 'storage/signatures/%'
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'officials' AND column_name = 'signature'
+			) THEN
+				UPDATE officials
+				SET signature = 'public/images/signatures/signatures.png'
+				WHERE signature LIKE 'storage/signatures/%';
+			END IF;
+		END $$;
 	`).Error; err != nil {
 		fmt.Printf("⚠️  could not normalize official signature path: %v\n", err)
 	}
 
 	// Ensure every admin has an official row so admin appears in official section.
+	// Guard with column-existence checks to support legacy schemas.
 	if err := db.Exec(`
-		INSERT INTO officials (user_id, nip, pangkat, jabatan, signature, is_active)
-		SELECT u.id, '198001012005011001', 'Penata', 'Admin Fakultas', 'public/images/signatures/signatures.png', TRUE
-		FROM users u
-		JOIN user_roles ur ON ur.user_id = u.id
-		JOIN roles r ON r.id = ur.role_id
-		WHERE r.code = 'ADMIN'
-		  AND NOT EXISTS (
-			  SELECT 1 FROM officials o WHERE o.user_id = u.id
-		  )
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'officials' AND column_name IN ('user_id','nip','pangkat','jabatan','signature','is_active')
+				GROUP BY table_name
+				HAVING COUNT(*) = 6
+			) THEN
+				INSERT INTO officials (user_id, nip, pangkat, jabatan, signature, is_active)
+				SELECT u.id, '198001012005011001', 'Penata', 'Admin Fakultas', 'public/images/signatures/signatures.png', TRUE
+				FROM users u
+				JOIN user_roles ur ON ur.user_id = u.id
+				JOIN roles r ON r.id = ur.role_id
+				WHERE r.code = 'ADMIN'
+				  AND NOT EXISTS (
+					  SELECT 1 FROM officials o WHERE o.user_id = u.id
+				  );
+			END IF;
+		END $$;
 	`).Error; err != nil {
 		fmt.Printf("⚠️  could not backfill admin officials: %v\n", err)
 	}
