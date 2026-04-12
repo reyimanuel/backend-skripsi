@@ -16,6 +16,8 @@ go.work
 
 # air
 tmp
+build-errors.log
+*.log
 
 # IDE directories
 .env
