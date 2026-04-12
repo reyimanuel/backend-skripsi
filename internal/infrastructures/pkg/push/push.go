@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"firebase.google.com/go/v4/messaging"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/fcm"
 	"github.com/reyimanuel/letter-administration/internal/migration"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -36,6 +38,11 @@ func SendToUser(ctx context.Context, db *gorm.DB, userID uint, title string, bod
 		return nil, errors.New("title/body is empty")
 	}
 
+	// Best-effort: store notification for in-app history.
+	if err := storeNotificationsForUsers(db, []uint{userID}, title, body, data); err != nil {
+		log.Printf("push: store notification failed: user_id=%d err=%v", userID, err)
+	}
+
 	tokens, err := listActiveTokensByUserID(db, userID)
 	if err != nil {
 		return nil, err
@@ -58,7 +65,20 @@ func SendToRole(ctx context.Context, db *gorm.DB, roleCode string, title string,
 		return nil, errors.New("roleCode is empty")
 	}
 
-	tokens, err := listActiveTokensByRoleCode(db, roleCode)
+	userIDs, err := listUserIDsByRoleCode(db, roleCode)
+	if err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return &SendResult{Tokens: 0}, nil
+	}
+
+	// Best-effort: store notification for in-app history (one per recipient user).
+	if err := storeNotificationsForUsers(db, userIDs, title, body, data); err != nil {
+		log.Printf("push: store role notification failed: role=%q err=%v", roleCode, err)
+	}
+
+	tokens, err := listActiveTokensByUserIDs(db, userIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -126,19 +146,10 @@ func sendToTokens(ctx context.Context, db *gorm.DB, tokens []string, title strin
 }
 
 func listActiveTokensByUserID(db *gorm.DB, userID uint) ([]string, error) {
-	var tokens []string
-	err := db.Model(&migration.UserDeviceToken{}).
-		Where("user_id = ?", userID).
-		Where("revoked_at = ?", false).
-		Where("token <> ''").
-		Pluck("token", &tokens).Error
-	if err != nil {
-		return nil, err
-	}
-	return uniqueStrings(tokens), nil
+	return listActiveTokensByUserIDs(db, []uint{userID})
 }
 
-func listActiveTokensByRoleCode(db *gorm.DB, roleCode string) ([]string, error) {
+func listUserIDsByRoleCode(db *gorm.DB, roleCode string) ([]uint, error) {
 	var userIDs []uint
 	if err := db.Model(&migration.UserRole{}).
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
@@ -146,10 +157,14 @@ func listActiveTokensByRoleCode(db *gorm.DB, roleCode string) ([]string, error) 
 		Pluck("user_roles.user_id", &userIDs).Error; err != nil {
 		return nil, err
 	}
+	return uniqueUints(userIDs), nil
+}
+
+func listActiveTokensByUserIDs(db *gorm.DB, userIDs []uint) ([]string, error) {
+	userIDs = uniqueUints(userIDs)
 	if len(userIDs) == 0 {
 		return []string{}, nil
 	}
-
 	var tokens []string
 	if err := db.Model(&migration.UserDeviceToken{}).
 		Where("user_id IN ?", userIDs).
@@ -160,6 +175,33 @@ func listActiveTokensByRoleCode(db *gorm.DB, roleCode string) ([]string, error) 
 		return nil, err
 	}
 	return uniqueStrings(tokens), nil
+}
+
+func storeNotificationsForUsers(db *gorm.DB, userIDs []uint, title string, body string, data map[string]string) error {
+	userIDs = uniqueUints(userIDs)
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	dataJSON := datatypes.JSON([]byte("{}"))
+	if data != nil {
+		if b, err := json.Marshal(data); err == nil {
+			dataJSON = datatypes.JSON(b)
+		}
+	}
+
+	records := make([]migration.UserNotification, 0, len(userIDs))
+	for _, uid := range userIDs {
+		records = append(records, migration.UserNotification{
+			UserID: uid,
+			Title:  title,
+			Body:   body,
+			Data:   dataJSON,
+		})
+	}
+
+	// Insert in batches for efficiency.
+	return db.CreateInBatches(records, 200).Error
 }
 
 func updateTokensLastSentAt(tx *gorm.DB, tokens []string, sentAt time.Time) error {
@@ -212,6 +254,22 @@ func uniqueStrings(in []string) []string {
 		}
 		seen[s] = struct{}{}
 		out = append(out, s)
+	}
+	return out
+}
+
+func uniqueUints(in []uint) []uint {
+	seen := make(map[uint]struct{}, len(in))
+	out := make([]uint, 0, len(in))
+	for _, v := range in {
+		if v == 0 {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
 	}
 	return out
 }

@@ -9,6 +9,7 @@ import (
 var Models = []any{
 	User{},
 	UserDeviceToken{},
+	UserNotification{},
 	Official{},
 	Role{},
 	UserRole{},
@@ -45,6 +46,20 @@ type UserDeviceToken struct {
 	UpdatedAt  time.Time  `gorm:"autoUpdateTime"`
 	RevokedAt  bool       `gorm:"not null;default:false"` // kept for backward compatibility (acts as revoked flag)
 	LastSentAt *time.Time `gorm:"index"`                  // last seen / last updated timestamp
+
+	User User `gorm:"constraint:OnDelete:CASCADE;"`
+}
+
+// UserNotification stores an in-app notification record so FE can display
+// notification history (e.g. last 7 days), even when push delivery fails.
+type UserNotification struct {
+	ID        uint           `gorm:"primaryKey"`
+	UserID    uint           `gorm:"not null;index"`
+	Title     string         `gorm:"size:150;not null"`
+	Body      string         `gorm:"type:text;not null"`
+	Data      datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'"`
+	ReadAt    *time.Time     `gorm:"index"`
+	CreatedAt time.Time      `gorm:"autoCreateTime;index"`
 
 	User User `gorm:"constraint:OnDelete:CASCADE;"`
 }

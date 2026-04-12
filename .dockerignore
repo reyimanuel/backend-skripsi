@@ -1,0 +1,25 @@
+.git/
+.gitignore
+
+# Local env / secrets
+.env
+keys/
+*.pem
+
+# Local tooling
+tmp/
+**/*.log
+
+# Runtime-generated / uploads
+public/generated/
+public/generated/**
+public/images/profile-photos/*
+!public/images/profile-photos/example.png
+public/images/signatures/*
+!public/images/signatures/signatures.png
+public/images/student-cards/*
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
