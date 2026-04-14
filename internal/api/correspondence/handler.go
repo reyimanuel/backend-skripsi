@@ -47,6 +47,35 @@ func (h *Handler) CreateDraftLetter(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) UpdateDraftLetter(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	letterIDParam := ctx.Param("id")
+	letterID, err := strconv.Atoi(letterIDParam)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("surat tidak valid"))
+		return
+	}
+
+	var req UpdateDraftRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data update draft tidak valid"))
+		return
+	}
+
+	response, err := h.Service.UpdateDraftLetter(uint(letterID), userID, req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) SubmitDraftLetter(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {

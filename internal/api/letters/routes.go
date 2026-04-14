@@ -11,8 +11,9 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	service := NewService(repo)
 	handler := NewHandler(service)
 
-	r.POST("/upload", middleware.MiddlewareRole("ADMIN"), handler.UploadTemplateFlexible)
-	r.POST("/upload/:id", middleware.MiddlewareRole("ADMIN"), handler.UploadTemplate)
+	// v2: upload + analyze placeholders
+	r.POST("/templates/upload", middleware.MiddlewareRole("ADMIN"), handler.UploadTemplateV2)
+
 	r.DELETE("/template/:id", middleware.MiddlewareRole("ADMIN"), handler.DeleteTemplate)
 	r.GET("/templates", handler.GetAllTemplates)
 	r.GET("/preview/:id", handler.PreviewTemplate)

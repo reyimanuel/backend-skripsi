@@ -15,6 +15,7 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	r.GET("/letters", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.ListLetters)
 	r.POST("/drafts", middleware.MiddlewareRole("MAHASISWA"), handler.CreateDraftLetter)
+	r.PATCH("/drafts/:id", middleware.MiddlewareRole("MAHASISWA"), handler.UpdateDraftLetter)
 	r.POST("/submit/:id", middleware.MiddlewareRole("MAHASISWA"), handler.SubmitDraftLetter)
 	r.DELETE("/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.DeleteLetter)
 	r.GET("/preview/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.PreviewLetter)

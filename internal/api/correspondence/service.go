@@ -144,11 +144,16 @@ func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Respo
 		}
 
 		// Ensure template exists for the type (so we don't allow drafting unusable letters)
-		if _, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID); err != nil {
+		template, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID)
+		if err != nil {
 			return errs.NotFound("Template surat tidak ditemukan")
 		}
 
 		payloadMap = buildSubmitPayload(req.Payload)
+		if missing := missingTemplateKeysForPayload(template, req.LetterTypeID, payloadMap); len(missing) > 0 {
+			return errs.BadRequestWithData("Data draft belum lengkap", missingTemplateFieldsData{Missing: missing})
+		}
+
 		payloadJSON, err := marshalPayload(payloadMap)
 		if err != nil {
 			return errs.InternalServerError("Terjadi kesalahan dalam membuat draft")
@@ -184,6 +189,103 @@ func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Respo
 			FilePath:     "",
 			PreviewURL:   "",
 			CreatedAt:    letter.CreatedAt,
+		},
+	}, nil
+}
+
+func (s *Service) UpdateDraftLetter(letterID uint, userID uint, req UpdateDraftRequest) (*Response, error) {
+	var payloadOut map[string]any
+	var letterOut *migration.Letter
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+		if err != nil {
+			return errs.Forbidden("Hanya mahasiswa yang dapat mengubah draft surat")
+		}
+		if err := policy.CanStudentSubmitLetter(&student.User, student); err != nil {
+			return err
+		}
+
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
+		if err != nil {
+			return errs.NotFound("Surat tidak ditemukan")
+		}
+		if letter.StudentID != student.ID {
+			return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+		}
+		if letter.Status != statusDraft {
+			return errs.BadRequest("Surat bukan draft")
+		}
+
+		if req.Subject != nil {
+			subject := strings.TrimSpace(*req.Subject)
+			if subject == "" {
+				return errs.BadRequest("subject tidak boleh kosong")
+			}
+			letter.Subject = subject
+		}
+
+		payloadMap, err := unmarshalPayload(letter.Payload)
+		if err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam membaca data draft")
+		}
+		if payloadMap == nil {
+			payloadMap = map[string]any{}
+		}
+
+		if req.Payload != nil {
+			incoming := buildSubmitPayload(req.Payload)
+			for k, v := range incoming {
+				payloadMap[k] = v
+			}
+
+			tujuan := ""
+			if raw, ok := payloadMap["tujuan"]; ok {
+				tujuan = strings.TrimSpace(fmt.Sprint(raw))
+			}
+			if tujuan == "" {
+				return errs.BadRequest("tujuan surat wajib diisi")
+			}
+
+			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
+			if err != nil {
+				return errs.NotFound("Template surat tidak ditemukan")
+			}
+			if missing := missingTemplateKeysForPayload(template, letter.LetterTypeID, payloadMap); len(missing) > 0 {
+				return errs.BadRequestWithData("Data draft belum lengkap", missingTemplateFieldsData{Missing: missing})
+			}
+		}
+
+		payloadJSON, err := marshalPayload(payloadMap)
+		if err != nil {
+			return errs.InternalServerError("Terjadi kesalahan dalam memproses draft")
+		}
+		letter.Payload = payloadJSON
+
+		if err := s.Repo.SaveLetter(tx, letter); err != nil {
+			return errs.InternalServerError("Gagal menyimpan draft")
+		}
+
+		payloadOut = payloadMap
+		letterOut = letter
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "Draft surat berhasil diperbarui",
+		Data: Data{
+			ID:           letterOut.ID,
+			LetterTypeID: letterOut.LetterTypeID,
+			Subject:      letterOut.Subject,
+			Status:       letterOut.Status,
+			Payload:      payloadOut,
+			FilePath:     letterOut.FilePath,
+			PreviewURL:   "",
+			CreatedAt:    letterOut.CreatedAt,
 		},
 	}, nil
 }
@@ -265,6 +367,41 @@ type missingAttachmentsData struct {
 	Missing []string `json:"missing"`
 }
 
+type missingTemplateFieldsData struct {
+	Missing []string `json:"missing"`
+}
+
+func extractTemplatePlaceholdersForLetterType(template *migration.LetterTemplate, letterTypeID uint) []string {
+	if template == nil {
+		return nil
+	}
+
+	var templatePlaceholders []string
+	if len(template.Placeholders) > 0 {
+		if err := json.Unmarshal(template.Placeholders, &templatePlaceholders); err != nil {
+			log.Printf("invalid placeholders JSON on template: letter_type_id=%d err=%v", letterTypeID, err)
+			templatePlaceholders = nil
+		}
+	}
+
+	if len(templatePlaceholders) == 0 {
+		// Backward compatibility for templates uploaded before v2.
+		if analysis, err := helpers.AnalyzeDocxTemplatePlaceholders(template.FilePath); err == nil {
+			templatePlaceholders = analysis.Placeholders
+		} else {
+			log.Printf("placeholder analysis skipped: template=%q err=%v", template.FilePath, err)
+		}
+	}
+
+	return templatePlaceholders
+}
+
+func missingTemplateKeysForPayload(template *migration.LetterTemplate, letterTypeID uint, payload map[string]any) []string {
+	placeholders := extractTemplatePlaceholdersForLetterType(template, letterTypeID)
+	ph := helpers.ClassifyTemplatePlaceholders(placeholders)
+	return helpers.MissingPayloadKeys(payload, ph.RequiredPayloadKeys)
+}
+
 func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, error) {
 	var previewURL string
 	var studentName string
@@ -339,6 +476,30 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		payloadMap["tanggal"] = helpers.FormatIndonesianDate(now)
 		payloadMap["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
 
+		// Validate template placeholders: ensure all required payload keys exist
+		// so the generated document won't keep any {{...}} tokens.
+		var templatePlaceholders []string
+		if len(template.Placeholders) > 0 {
+			if err := json.Unmarshal(template.Placeholders, &templatePlaceholders); err != nil {
+				log.Printf("invalid placeholders JSON on template: letter_type_id=%d err=%v", letter.LetterTypeID, err)
+				templatePlaceholders = nil
+			}
+		}
+		if len(templatePlaceholders) == 0 {
+			// Backward compatibility for templates uploaded before v2.
+			if analysis, err := helpers.AnalyzeDocxTemplatePlaceholders(template.FilePath); err == nil {
+				templatePlaceholders = analysis.Placeholders
+			} else {
+				log.Printf("placeholder analysis skipped: template=%q err=%v", template.FilePath, err)
+			}
+		}
+
+		ph := helpers.ClassifyTemplatePlaceholders(templatePlaceholders)
+		missingPayload := helpers.MissingPayloadKeys(payloadMap, ph.RequiredPayloadKeys)
+		if len(missingPayload) > 0 {
+			return errs.BadRequestWithData("Data surat belum lengkap", missingTemplateFieldsData{Missing: missingPayload})
+		}
+
 		// Persist the enriched payload so later steps (approve/history) can
 		// reuse the same computed fields.
 		payloadJSON, err := marshalPayload(payloadMap)
@@ -348,7 +509,19 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		}
 		letter.Payload = payloadJSON
 
-		data := buildTemplateData(student, payloadMap)
+		// Build a payload view for templating that includes blank defaults for
+		// auto-filled keys that may only be available later (e.g. nomor_surat).
+		payloadForTemplate := make(map[string]any, len(payloadMap)+len(ph.AutoFilledKeys))
+		for k, v := range payloadMap {
+			payloadForTemplate[k] = v
+		}
+		for _, k := range ph.AutoFilledKeys {
+			if _, ok := payloadForTemplate[k]; !ok {
+				payloadForTemplate[k] = ""
+			}
+		}
+
+		data := buildTemplateData(student, payloadForTemplate)
 
 		outputDocx := fmt.Sprintf("public/generated/letter_%d.docx", now.UnixNano())
 		if err := s.generateLetterDocument(template.FilePath, outputDocx, data); err != nil {
@@ -962,6 +1135,15 @@ func (s *Service) generateLetterDocument(templatePath string, outputPath string,
 	if err := helpers.FillTemplate(templatePath, outputPath, data); err != nil {
 		log.Printf("fill template failed: src=%q dst=%q err=%v", templatePath, outputPath, err)
 		return errs.InternalServerError("Gagal mengisi template surat")
+	}
+
+	if leftover, err := helpers.ExtractDocxPlaceholders(outputPath); err == nil {
+		if len(leftover) > 0 {
+			return errs.BadRequestWithData("Data surat belum lengkap", missingTemplateFieldsData{Missing: leftover})
+		}
+	} else {
+		log.Printf("failed validating generated docx placeholders: path=%q err=%v", outputPath, err)
+		return errs.InternalServerError("Gagal memvalidasi hasil surat")
 	}
 
 	if err := helpers.ConvertToPDF(outputPath); err != nil {

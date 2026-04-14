@@ -35,9 +35,10 @@ func (r *Repository) UpsertTemplate(tx *gorm.DB, t *migration.LetterTemplate) er
 	}
 
 	return tx.Model(&existing).Updates(map[string]interface{}{
-		"file_path":  t.FilePath,
-		"file_type":  t.FileType,
-		"created_by": t.CreatedBy,
+		"file_path":    t.FilePath,
+		"file_type":    t.FileType,
+		"placeholders": t.Placeholders,
+		"created_by":   t.CreatedBy,
 	}).Error
 }
 

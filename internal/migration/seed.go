@@ -38,6 +38,13 @@ func (t *SeedTargets) Normalize() {
 }
 
 // ParseSeedTargets parses a comma-separated list (or presets) into SeedTargets.
+//
+// Notes:
+//   - Some targets expand into closely related datasets for convenience.
+//     For example, "users" also enables seeding student + official records that
+//     depend on users.
+//   - Dependency normalization is handled by SeedTargets.Normalize().
+//
 // Examples:
 // - "users"
 // - "roles,users"
@@ -57,18 +64,16 @@ func ParseSeedTargets(spec string) (SeedTargets, error) {
 			continue
 		}
 		switch p {
-		case "roles":
-			t.Roles = true
 		case "users", "user":
+			// Users is a "bundle" target: when you ask to seed users, you usually
+			// want the main user-linked entities too.
+			t.Roles = true
 			t.Users = true
-		case "students", "student":
 			t.Students = true
-		case "officials", "official":
 			t.Officials = true
-		case "lettertypes", "letter-types", "letter_type", "letter_types":
-			t.LetterTypes = true
 		case "templates", "template":
 			t.Templates = true
+			t.LetterTypes = true
 		default:
 			return SeedTargets{}, fmt.Errorf("unknown seed target: %s", p)
 		}

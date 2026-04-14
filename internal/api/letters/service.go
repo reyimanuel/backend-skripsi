@@ -90,7 +90,9 @@ func (s *Service) UpdateAttachmentRequirements(letterTypeID uint, req UpdateAtta
 	return &Response{StatusCode: http.StatusOK, Message: "Requirements berhasil diupdate"}, nil
 }
 
-func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibleRequest, file *multipart.FileHeader) (*Response, error) {
+// UploadTemplateV2 uploads a .docx template, detects {{placeholders}} inside the DOCX,
+// persists them, and returns the required payload keys to help clients build forms.
+func (s *Service) UploadTemplateV2(adminID uint, req UploadTemplateV2Request, file *multipart.FileHeader) (*Response, error) {
 	if file == nil {
 		return nil, errs.BadRequest("file tidak ditemukan")
 	}
@@ -108,6 +110,7 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 
 	mime, err := helpers.DetectMimeTypeFromPath(newPath)
 	if err != nil {
+		_ = os.Remove(newPath)
 		return nil, errs.InternalServerError("gagal membaca file")
 	}
 
@@ -121,8 +124,21 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 		return nil, errs.BadRequest("file docx tidak valid")
 	}
 
+	analysis, err := helpers.AnalyzeDocxTemplatePlaceholders(newPath)
+	if err != nil {
+		_ = os.Remove(newPath)
+		log.Printf("failed analyzing template placeholders: path=%q err=%v", newPath, err)
+		return nil, errs.BadRequest("gagal membaca placeholder pada template")
+	}
+	placeholdersJSON, err := json.Marshal(analysis.Placeholders)
+	if err != nil {
+		_ = os.Remove(newPath)
+		return nil, errs.InternalServerError("gagal memproses placeholder template")
+	}
+
 	var oldPath string
 	var resolvedLetterTypeID uint
+	var resolvedLetterType migration.LetterType
 
 	err = s.Repo.WithTx(func(tx *gorm.DB) error {
 		letterTypeIDStr := strings.TrimSpace(req.LetterTypeID)
@@ -132,9 +148,11 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 				return errs.BadRequest("letter_type_id tidak valid")
 			}
 			resolvedLetterTypeID = uint(parsed)
-			if _, err := s.Repo.GetLetterTypeByID(tx, resolvedLetterTypeID); err != nil {
+			lt, err := s.Repo.GetLetterTypeByID(tx, resolvedLetterTypeID)
+			if err != nil {
 				return errs.NotFound("Jenis surat tidak ditemukan")
 			}
+			resolvedLetterType = *lt
 		} else {
 			code := strings.TrimSpace(req.Code)
 			name := strings.TrimSpace(req.Name)
@@ -153,6 +171,7 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 				return err
 			}
 			resolvedLetterTypeID = lt.ID
+			resolvedLetterType = *lt
 		}
 
 		existing, _ := s.Repo.GetTemplateByLetterTypeID(tx, resolvedLetterTypeID)
@@ -164,6 +183,7 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 			LetterTypeID: resolvedLetterTypeID,
 			FilePath:     newPath,
 			FileType:     "docx",
+			Placeholders: datatypes.JSON(placeholdersJSON),
 			CreatedBy:    adminID,
 		})
 	})
@@ -174,75 +194,30 @@ func (s *Service) UploadTemplateFlexible(adminID uint, req UploadTemplateFlexibl
 
 	helpers.RemoveOldFile(oldPath, newPath)
 
+	// Ensure slices aren't nil in JSON.
+	if analysis.Placeholders == nil {
+		analysis.Placeholders = []string{}
+	}
+	if analysis.AutoFilledKeys == nil {
+		analysis.AutoFilledKeys = []string{}
+	}
+	if analysis.RequiredPayloadKeys == nil {
+		analysis.RequiredPayloadKeys = []string{}
+	}
+
 	return &Response{
 		StatusCode: http.StatusCreated,
 		Message:    "Template surat berhasil diupload",
-		Data: map[string]any{
-			"letter_type_id": resolvedLetterTypeID,
-			"file_path":      helpers.ToAbsoluteURL(newPath),
+		Data: TemplateUploadV2Data{
+			LetterTypeID:        resolvedLetterTypeID,
+			Code:                resolvedLetterType.Code,
+			Name:                resolvedLetterType.Name,
+			Description:         resolvedLetterType.Description,
+			FilePath:            helpers.ToAbsoluteURL(newPath),
+			Placeholders:        analysis.Placeholders,
+			AutoFilledKeys:      analysis.AutoFilledKeys,
+			RequiredPayloadKeys: analysis.RequiredPayloadKeys,
 		},
-	}, nil
-}
-
-func (s *Service) UploadTemplate(adminID uint, letterTypeID uint, file *multipart.FileHeader) (*Response, error) {
-	if filepath.Ext(file.Filename) != ".docx" {
-		return nil, errs.BadRequest("hanya file .docx yang diperbolehkan")
-	}
-
-	newFileName := helpers.GenerateUniqueFileName(file.Filename)
-	newPath := filepath.Join("public", "letter-template", newFileName)
-
-	if err := helpers.SaveUploadedFile(file, newPath); err != nil {
-		log.Printf("failed saving uploaded template file: path=%q err=%v", newPath, err)
-		return nil, errs.InternalServerError("gagal menyimpan file")
-	}
-
-	mime, err := helpers.DetectMimeTypeFromPath(newPath)
-	if err != nil {
-		return nil, errs.InternalServerError("gagal membaca file")
-	}
-
-	allowedMimes := map[string]bool{
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
-		"application/zip": true,
-	}
-	if !allowedMimes[mime] {
-		log.Printf("invalid mime type for uploaded template: mime=%q", mime)
-		return nil, errs.BadRequest("file docx tidak valid")
-	}
-
-	var oldPath string
-
-	log.Printf("generated template file: name=%q path=%q", newFileName, newPath)
-
-	err = s.Repo.WithTx(func(tx *gorm.DB) error {
-
-		if _, err := s.Repo.GetLetterTypeByID(tx, letterTypeID); err != nil {
-			return errs.NotFound("Jenis surat tidak ditemukan")
-		}
-
-		existing, _ := s.Repo.GetTemplateByLetterTypeID(tx, letterTypeID)
-		if existing != nil {
-			oldPath = existing.FilePath
-		}
-
-		return s.Repo.UpsertTemplate(tx, &migration.LetterTemplate{
-			LetterTypeID: letterTypeID,
-			FilePath:     newPath,
-			FileType:     "docx",
-			CreatedBy:    adminID,
-		})
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	helpers.RemoveOldFile(oldPath, newPath)
-
-	return &Response{
-		StatusCode: http.StatusCreated,
-		Message:    "Template surat berhasil diupload",
 	}, nil
 }
 

@@ -208,6 +208,10 @@ type LetterTemplate struct {
 	FilePath string `gorm:"size:255;not null"`
 	FileType string `gorm:"size:20;not null"`
 
+	// Placeholders contains the list of detected {{key}} placeholders inside the docx.
+	// Stored for introspection (e.g. FE form generation / validation).
+	Placeholders datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'"`
+
 	CreatedBy uint `gorm:"not null"`
 
 	CreatedAt time.Time

@@ -10,6 +10,11 @@ type CreateDraftRequest struct {
 	Payload      map[string]any `json:"payload" binding:"required"`
 }
 
+type UpdateDraftRequest struct {
+	Subject *string        `json:"subject"`
+	Payload map[string]any `json:"payload"`
+}
+
 type Data struct {
 	ID           uint           `json:"id"`
 	LetterTypeID uint           `json:"letter_type_id"`

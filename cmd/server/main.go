@@ -59,6 +59,7 @@ func handleCLI() {
 		fmt.Println("  migrate [--force]")
 		fmt.Println("  migrate-only")
 		fmt.Println("  seed [--only=users|roles,users|all] [--truncate-all] [--force]")
+		fmt.Println("    note: --only=users also seeds students + officials (user-linked tables)")
 		fmt.Println("  reset [--force]")
 	}
 }

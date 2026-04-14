@@ -2,6 +2,8 @@ package helpers
 
 import (
 	"archive/zip"
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -220,6 +223,177 @@ func DetectMimeTypeFromPath(path string) (string, error) {
 	return http.DetectContentType(buffer), nil
 }
 
+type TemplatePlaceholderAnalysis struct {
+	Placeholders         []string `json:"placeholders"`
+	AutoFilledKeys       []string `json:"auto_filled_keys"`
+	RequiredPayloadKeys  []string `json:"required_payload_keys"`
+	UnknownOrUnsupported []string `json:"unknown_or_unsupported_keys"`
+}
+
+// ClassifyTemplatePlaceholders classifies an already-extracted placeholder list.
+// Use this when placeholders are stored in DB.
+func ClassifyTemplatePlaceholders(placeholders []string) TemplatePlaceholderAnalysis {
+	keys := make([]string, 0, len(placeholders))
+	seen := make(map[string]struct{}, len(placeholders))
+	for _, raw := range placeholders {
+		k := strings.TrimSpace(raw)
+		if k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	autoMap := templateAutoFilledKeys()
+	auto := make([]string, 0)
+	required := make([]string, 0)
+	unknown := make([]string, 0)
+
+	for _, k := range keys {
+		if _, ok := autoMap[k]; ok {
+			auto = append(auto, k)
+			continue
+		}
+		required = append(required, k)
+	}
+
+	return TemplatePlaceholderAnalysis{
+		Placeholders:         keys,
+		AutoFilledKeys:       auto,
+		RequiredPayloadKeys:  required,
+		UnknownOrUnsupported: unknown,
+	}
+}
+
+func templateAutoFilledKeys() map[string]struct{} {
+	// Keys that the system already fills automatically when generating letters.
+	// See buildTemplateData() and buildApprovedPayload() in correspondence service.
+	return map[string]struct{}{
+		"mahasiswa":     {},
+		"nim":           {},
+		"program_studi": {},
+		"angkatan":      {},
+		"tanggal":       {},
+		"tahun_ajaran":  {},
+		"tujuan_surat":  {},
+		"nomor_surat":   {},
+		"official":      {},
+		"nip":           {},
+		"pangkat":       {},
+		"jabatan":       {},
+		"ttd":           {},
+		"signature":     {},
+	}
+}
+
+func isDocxTextXMLPart(name string) bool {
+	// Common docx text-bearing parts.
+	if name == "word/document.xml" {
+		return true
+	}
+	if strings.HasPrefix(name, "word/header") && strings.HasSuffix(name, ".xml") {
+		return true
+	}
+	if strings.HasPrefix(name, "word/footer") && strings.HasSuffix(name, ".xml") {
+		return true
+	}
+	return false
+}
+
+// ExtractDocxPlaceholders returns unique placeholder keys found in a .docx
+// template, looking for tokens like {{key}}.
+//
+// Notes:
+//   - Word may split a placeholder across multiple XML runs; normalizeDocxPlaceholders
+//     collapses those fragments back into a contiguous token before extraction.
+func ExtractDocxPlaceholders(docxPath string) ([]string, error) {
+	r, err := zip.OpenReader(docxPath)
+	if err != nil {
+		return nil, fmt.Errorf("open docx: %w", err)
+	}
+	defer r.Close()
+
+	keyRe := regexp.MustCompile(`\{\{([a-zA-Z0-9_]+)\}\}`)
+	seen := make(map[string]struct{})
+
+	for _, f := range r.File {
+		if !isDocxTextXMLPart(f.Name) {
+			continue
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		s := normalizeDocxPlaceholders(string(content))
+		matches := keyRe.FindAllStringSubmatch(s, -1)
+		for _, m := range matches {
+			if len(m) < 2 {
+				continue
+			}
+			k := strings.TrimSpace(m[1])
+			if k == "" {
+				continue
+			}
+			seen[k] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// AnalyzeDocxTemplatePlaceholders extracts {{key}} tokens from a .docx template
+// and classifies which keys are auto-filled by the system vs which keys should
+// come from the letter payload.
+func AnalyzeDocxTemplatePlaceholders(docxPath string) (TemplatePlaceholderAnalysis, error) {
+	keys, err := ExtractDocxPlaceholders(docxPath)
+	if err != nil {
+		return TemplatePlaceholderAnalysis{}, err
+	}
+	return ClassifyTemplatePlaceholders(keys), nil
+}
+
+// MissingPayloadKeys returns required keys that are missing (or empty) in payload.
+// A key is considered missing when:
+// - payload does not contain it, OR
+// - value is nil, OR
+// - value is a string that is empty/whitespace.
+func MissingPayloadKeys(payload map[string]any, requiredKeys []string) []string {
+	if len(requiredKeys) == 0 {
+		return []string{}
+	}
+	missing := make([]string, 0)
+	for _, k := range requiredKeys {
+		v, ok := payload[k]
+		if !ok || v == nil {
+			missing = append(missing, k)
+			continue
+		}
+		if s, ok := v.(string); ok {
+			if strings.TrimSpace(s) == "" {
+				missing = append(missing, k)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
 // normalizeDocxPlaceholders removes XML tags that Word inserts *inside*
 // {{key}} spans when it splits a run. For example Word may store {{dekan}} as:
 //
@@ -238,6 +412,12 @@ func normalizeDocxPlaceholders(xmlContent string) string {
 		clean = strings.Join(strings.Fields(clean), "")
 		return clean
 	})
+}
+
+func escapeXMLText(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
 }
 
 // FillTemplate copies a .docx file from srcPath to dstPath while replacing
@@ -276,10 +456,10 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 			return err
 		}
 
-		if f.Name == "word/document.xml" {
+		if isDocxTextXMLPart(f.Name) {
 			s := normalizeDocxPlaceholders(string(content))
 			for key, val := range data {
-				s = strings.ReplaceAll(s, "{{"+key+"}}", val)
+				s = strings.ReplaceAll(s, "{{"+key+"}}", escapeXMLText(val))
 			}
 			content = []byte(s)
 		}
