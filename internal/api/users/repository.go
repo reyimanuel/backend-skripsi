@@ -83,6 +83,17 @@ func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migrati
 	return &officials[0], nil
 }
 
+func (r *Repository) GetActiveOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
+	var official migration.Official
+	err := tx.Preload("User").
+		Where("user_id = ? AND is_active = ?", userID, true).
+		First(&official).Error
+	if err != nil {
+		return nil, err
+	}
+	return &official, nil
+}
+
 func (r *Repository) GetByNIM(nim string) (*migration.Student, error) {
 	var student migration.Student
 	if err := r.DB.Where("nim = ?", nim).First(&student).Error; err != nil {

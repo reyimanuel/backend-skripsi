@@ -14,12 +14,13 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.GET("/letters", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.ListLetters)
+	r.GET("/forwarded", middleware.MiddlewareRole("DEKAN", "WAKIL_DEKAN"), handler.ListForwardedLetters)
 	r.POST("/drafts", middleware.MiddlewareRole("MAHASISWA"), handler.CreateDraftLetter)
 	r.PATCH("/drafts/:id", middleware.MiddlewareRole("MAHASISWA"), handler.UpdateDraftLetter)
 	r.POST("/submit/:id", middleware.MiddlewareRole("MAHASISWA"), handler.SubmitDraftLetter)
 	r.DELETE("/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.DeleteLetter)
-	r.GET("/preview/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.PreviewLetter)
-	r.GET("/history/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.GetHistoryAndDetail)
-	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN"), handler.ApproveLetter)
+	r.GET("/preview/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.PreviewLetter)
+	r.GET("/history/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.GetHistoryAndDetail)
+	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.ApproveLetter)
 	r.POST("/attachments/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.UploadAttachments)
 }

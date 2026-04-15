@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ func NewService(repo *Repository, lettersRepo *letters.Repository, usersRepo *us
 	return &Service{Repo: repo, LettersRepo: lettersRepo, UsersRepo: usersRepo}
 }
 
-func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool) (string, string, error) {
+func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOfficial bool) (string, string, error) {
 	var filePath string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
@@ -84,14 +85,25 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool) (strin
 		}
 
 		if !isAdmin {
-			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
-			if err != nil {
-				log.Printf("student not found for preview: user_id=%d err=%v", userID, err)
-				return errs.Forbidden("Hanya pemilik surat yang dapat melihat preview")
-			}
+			if isOfficial {
+				official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					log.Printf("official not found for preview: user_id=%d err=%v", userID, err)
+					return errs.Forbidden("Hanya pejabat yang dapat melihat preview surat ini")
+				}
+				if letter.SignedByID == nil || *letter.SignedByID != official.ID {
+					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+				}
+			} else {
+				student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+				if err != nil {
+					log.Printf("student not found for preview: user_id=%d err=%v", userID, err)
+					return errs.Forbidden("Hanya pemilik surat yang dapat melihat preview")
+				}
 
-			if letter.StudentID != student.ID {
-				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+				if letter.StudentID != student.ID {
+					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+				}
 			}
 		}
 
@@ -118,6 +130,129 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool) (strin
 	}
 
 	return pdfPath, fileName, nil
+}
+
+func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Response, error) {
+	// Force forwarded-only listing for officials.
+	q.Status = statusForwarded
+
+	sort := strings.TrimSpace(q.Sort)
+	if sort != "" && sort != "created_at_desc" && sort != "created_at_asc" {
+		return nil, errs.BadRequest("sort tidak valid")
+	}
+	if sort == "" {
+		sort = "created_at_desc"
+	}
+
+	page := q.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	var createdFrom *time.Time
+	if strings.TrimSpace(q.CreatedFrom) != "" {
+		tm, err := parseTimeOrDate(strings.TrimSpace(q.CreatedFrom))
+		if err != nil {
+			return nil, errs.BadRequest("created_from tidak valid")
+		}
+		createdFrom = &tm
+	}
+	var createdTo *time.Time
+	if strings.TrimSpace(q.CreatedTo) != "" {
+		tm, err := parseTimeOrDate(strings.TrimSpace(q.CreatedTo))
+		if err != nil {
+			return nil, errs.BadRequest("created_to tidak valid")
+		}
+		createdTo = &tm
+	}
+	if createdFrom != nil && createdTo != nil && createdFrom.After(*createdTo) {
+		return nil, errs.BadRequest("range tanggal tidak valid")
+	}
+
+	var letterTypeID *uint
+	if q.LetterType != 0 {
+		letterTypeID = &q.LetterType
+	}
+
+	var items []LetterListItem
+	var total int64
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+		if err != nil {
+			return errs.Forbidden("Hanya pejabat yang dapat melihat surat forwarded")
+		}
+
+		signedByID := official.ID
+		letters, count, err := s.Repo.ListLetters(tx, ListLettersParams{
+			SignedByID:  &signedByID,
+			Query:       q.Q,
+			Status:      statusForwarded,
+			LetterType:  letterTypeID,
+			CreatedFrom: createdFrom,
+			CreatedTo:   createdTo,
+			Sort:        sort,
+			Page:        page,
+			PageSize:    pageSize,
+		})
+		if err != nil {
+			log.Printf("error listing forwarded letters: %v", err)
+			return errs.InternalServerError("Gagal mengambil daftar surat")
+		}
+		total = count
+
+		items = make([]LetterListItem, 0, len(letters))
+		for _, l := range letters {
+			previewURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", l.ID))
+			historyURL := helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/history/%d", l.ID))
+
+			student := &StudentSummary{
+				StudentID: l.Student.ID,
+				UserID:    l.Student.User.ID,
+				Name:      l.Student.User.Name,
+				NIM:       l.Student.NIM,
+			}
+
+			items = append(items, LetterListItem{
+				ID:      l.ID,
+				Subject: l.Subject,
+				Status:  l.Status,
+				LetterNo: func() *string {
+					if l.LetterNumber == nil || strings.TrimSpace(*l.LetterNumber) == "" {
+						return nil
+					}
+					return l.LetterNumber
+				}(),
+				LetterType: LetterTypeSummary{ID: l.LetterType.ID, Code: l.LetterType.Code, Name: l.LetterType.Name},
+				Student:    student,
+				PreviewURL: previewURL,
+				HistoryURL: historyURL,
+				CreatedAt:  l.CreatedAt,
+				UpdatedAt:  l.UpdatedAt,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "Daftar surat forwarded berhasil diambil",
+		Data: LetterListData{
+			Items: items,
+			Meta:  PaginationMeta{Page: page, PageSize: pageSize, Total: total},
+		},
+	}, nil
 }
 
 func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Response, error) {
@@ -612,6 +747,14 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
 		now := time.Now()
 
+		actor, err := s.UsersRepo.GetUserByID(tx, userID)
+		if err != nil {
+			return errs.Unauthorized("user tidak terautentikasi")
+		}
+		roles := actor.RoleSlice()
+		isAdmin := slices.Contains(roles, "ADMIN")
+		isOfficialRole := slices.Contains(roles, "DEKAN") || slices.Contains(roles, "WAKIL_DEKAN")
+
 		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
 		if err != nil {
 			log.Printf("letter not found: id=%d err=%v", letterID, err)
@@ -626,8 +769,40 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 		}
 		studentUserID = student.UserID
 
-		if letter.Status != statusSubmitted && letter.Status != statusForwarded {
-			return errs.BadRequest("Surat tidak dalam status yang dapat disetujui")
+		// Action gating by role + status.
+		switch req.Action {
+		case "forward":
+			if !isAdmin {
+				return errs.Forbidden("Hanya admin yang dapat meneruskan surat")
+			}
+			if letter.Status != statusSubmitted {
+				return errs.BadRequest("Surat tidak dalam status yang dapat diteruskan")
+			}
+		case "approve", "reject":
+			if letter.Status == statusSubmitted {
+				if !isAdmin {
+					return errs.Forbidden("Hanya admin yang dapat memproses surat pada tahap ini")
+				}
+			} else if letter.Status == statusForwarded {
+				if !isOfficialRole {
+					return errs.Forbidden("Hanya pejabat yang dapat memproses surat forwarded")
+				}
+				// Ensure the forwarded letter is assigned to this official.
+				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Data pejabat tidak ditemukan")
+				}
+				if letter.SignedByID == nil || *letter.SignedByID != officialActor.ID {
+					return errs.Forbidden("Surat ini tidak ditugaskan kepada Anda")
+				}
+				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
+					return err
+				}
+			} else {
+				return errs.BadRequest("Surat tidak dalam status yang dapat diproses")
+			}
+		default:
+			return errs.BadRequest("aksi tidak valid")
 		}
 
 		approval, err := s.Repo.GetApprovalByLetterID(tx, letter.ID)
@@ -651,12 +826,31 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 				return err
 			}
 
+			// Move approval stage to selected official role (pending).
+			normalized := strings.ToLower(strings.TrimSpace(req.SignedByRole))
+			normalized = strings.ReplaceAll(normalized, "_", " ")
+			normalized = strings.Join(strings.Fields(normalized), " ")
+			roleCode := ""
+			if normalized == "dekan" {
+				roleCode = "DEKAN"
+			} else if normalized == "wakil dekan" {
+				roleCode = "WAKIL_DEKAN"
+			}
+			if roleCode == "" {
+				return errs.BadRequest("Penandatangan tidak valid")
+			}
+			role, err := s.UsersRepo.GetRoleByCode(tx, roleCode)
+			if err != nil {
+				return errs.InternalServerError("Gagal memvalidasi role penandatangan")
+			}
+
 			letter.Status = statusForwarded
 			letter.SignedByID = &official.ID
-			approval.Status = approvalApproved
-			approval.ApproverID = &userID
+			approval.RoleID = role.ID
+			approval.Status = approvalPending
+			approval.ApproverID = nil
 			approval.Notes = req.Notes
-			approval.ApprovedAt = &now
+			approval.ApprovedAt = nil
 			notificationNotes = req.Notes
 
 		case "approve":
@@ -673,9 +867,19 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 				return errs.BadRequest("Nomor surat sudah digunakan")
 			}
 
-			official, err := s.resolveOfficial(tx, req.SignedByRole)
-			if err != nil {
-				return err
+			var official *migration.Official
+			if letter.Status == statusForwarded {
+				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Data pejabat tidak ditemukan")
+				}
+				official = officialActor
+			} else {
+				o, err := s.resolveOfficial(tx, req.SignedByRole)
+				if err != nil {
+					return err
+				}
+				official = o
 			}
 
 			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
@@ -869,7 +1073,7 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
-func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool) (*Response, error) {
+func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, isOfficial bool) (*Response, error) {
 	var out []LetterHistoryItem
 	var detail LetterHistoryDetail
 
@@ -883,12 +1087,22 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool) 
 		}
 
 		if !isAdmin {
-			student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
-			if err != nil {
-				return errs.Forbidden("Hanya pemilik surat yang dapat melihat riwayat")
-			}
-			if letter.StudentID != student.ID {
-				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+			if isOfficial {
+				official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Hanya pejabat yang dapat melihat riwayat surat ini")
+				}
+				if letter.SignedByID == nil || *letter.SignedByID != official.ID {
+					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+				}
+			} else {
+				student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Hanya pemilik surat yang dapat melihat riwayat")
+				}
+				if letter.StudentID != student.ID {
+					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+				}
 			}
 		}
 

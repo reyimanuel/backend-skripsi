@@ -99,6 +99,28 @@ func (h *Handler) SubmitDraftLetter(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) ListForwardedLetters(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var q ListLettersQuery
+	if err := ctx.ShouldBindQuery(&q); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Parameter pencarian surat tidak valid"))
+		return
+	}
+
+	response, err := h.Service.ListForwardedLetters(userID, q)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) ApproveLetter(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
@@ -126,7 +148,7 @@ func (h *Handler) ApproveLetter(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, response)
+	ctx.JSON(response.StatusCode, response)
 }
 
 func (h *Handler) PreviewLetter(ctx *gin.Context) {
@@ -155,7 +177,9 @@ func (h *Handler) PreviewLetter(ctx *gin.Context) {
 		return
 	}
 
-	pdfPath, fileName, err := h.Service.PreviewLetter(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"))
+	isAdmin := slices.Contains(claims.Roles, "ADMIN")
+	isOfficial := slices.Contains(claims.Roles, "DEKAN") || slices.Contains(claims.Roles, "WAKIL_DEKAN")
+	pdfPath, fileName, err := h.Service.PreviewLetter(uint(letterID), userID, isAdmin, isOfficial)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -236,7 +260,9 @@ func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 		return
 	}
 
-	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, slices.Contains(claims.Roles, "ADMIN"))
+	isAdmin := slices.Contains(claims.Roles, "ADMIN")
+	isOfficial := slices.Contains(claims.Roles, "DEKAN") || slices.Contains(claims.Roles, "WAKIL_DEKAN")
+	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, isAdmin, isOfficial)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

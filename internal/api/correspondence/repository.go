@@ -10,6 +10,7 @@ import (
 
 type ListLettersParams struct {
 	StudentID   *uint
+	SignedByID  *uint
 	Query       string
 	Status      string
 	LetterType  *uint
@@ -176,6 +177,9 @@ func (r *Repository) ListLetters(tx *gorm.DB, p ListLettersParams) ([]migration.
 
 	if p.StudentID != nil {
 		query = query.Where("letters.student_id = ?", *p.StudentID)
+	}
+	if p.SignedByID != nil {
+		query = query.Where("letters.signed_by_id = ?", *p.SignedByID)
 	}
 	if strings.TrimSpace(p.Status) != "" {
 		query = query.Where("letters.status = ?", p.Status)
