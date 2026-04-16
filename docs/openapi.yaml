@@ -1,156 +1,1453 @@
 openapi: 3.0.3
 info:
   title: Letter Administration API
-  version: 1.1.0
+  version: 1.2.0
   description: |
-    Updated user verification model with centralized email verification and
-    student-specific admin verification.
+    API untuk administrasi surat kampus (mahasiswa, admin, dekan, wakil dekan).
+
+    Catatan:
+    - Semua response JSON menggunakan envelope: { status_code, message, data? }.
+    - Endpoint preview mengembalikan PDF (bukan JSON).
+    - Akses berbasis role (ADMIN/MAHASISWA/DEKAN/WAKIL_DEKAN) diterapkan lewat middleware.
 servers:
   - url: /api
+
+tags:
+  - name: Users
+  - name: Letters
+  - name: Correspondence
+  - name: Notifications
+
 paths:
   /users/login:
     post:
-      summary: Login user
+      tags: [Users]
+      summary: Login
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                  format: email
-                password:
-                  type: string
+              $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Login success
-  /users/verify-email:
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+
+  /users/refresh:
     post:
-      summary: Verify email by token
+      tags: [Users]
+      summary: Refresh access token
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [token]
-              properties:
-                token:
-                  type: string
+              $ref: '#/components/schemas/RefreshTokenRequest'
       responses:
         '200':
-          description: Email verified
-  /users/resend-verification:
+          description: Refresh berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+
+  /users/logout:
     post:
-      summary: Resend email verification token
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email]
-              properties:
-                email:
-                  type: string
-                  format: email
-      responses:
-        '200':
-          description: Verification email resent
-  /users/me:
-    get:
-      summary: Get current user profile
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Current user profile
-  /users/pending/students:
-    get:
-      summary: List pending students (admin)
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Pending students list
-  /users/students/{id}/approve:
-    post:
-      summary: Approve student admin verification (admin)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Student approved
-  /users/students/{id}/reject:
-    post:
-      summary: Reject student admin verification (admin)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [reason]
-              properties:
-                reason:
-                  type: string
-      responses:
-        '200':
-          description: Student rejected
-  /users/officials:
-    post:
-      summary: Create official account by admin
+      tags: [Users]
+      summary: Logout (invalidate refresh token)
       security:
         - bearerAuth: []
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
-              type: object
-              required: [name, email, password, role_code, jabatan]
-              properties:
-                name:
-                  type: string
-                email:
-                  type: string
-                  format: email
-                password:
-                  type: string
-                role_code:
-                  type: string
-                  enum: [DEKAN, WAKIL_DEKAN]
-                nip:
-                  type: string
-                pangkat:
-                  type: string
-                jabatan:
-                  type: string
-                signature:
-                  type: string
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logout berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/register:
+    post:
+      tags: [Users]
+      summary: Register mahasiswa (multipart + kredensial)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterStudentMultipart'
       responses:
         '201':
-          description: Official created
+          description: Registrasi berhasil (biasanya perlu verifikasi email / admin)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/register/krs:
+    post:
+      tags: [Users]
+      summary: Register mahasiswa via OCR KRS (multipart + file krs)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterWithKRSMultipart'
+      responses:
+        '201':
+          description: Registrasi via KRS berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KRSPreviewEnvelope'
+
+  /users/verify-email:
+    post:
+      tags: [Users]
+      summary: Verifikasi email via token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email terverifikasi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/resend-verification:
+    post:
+      tags: [Users]
+      summary: Kirim ulang email verifikasi
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationRequest'
+      responses:
+        '200':
+          description: Email verifikasi dikirim ulang
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Ambil profil pengguna saat ini
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Profil pengguna
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeEnvelope'
+    patch:
+      tags: [Users]
+      summary: Update profil saya
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMyProfileRequest'
+      responses:
+        '200':
+          description: Profil berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeEnvelope'
+
+  /users/me/fcm-token:
+    post:
+      tags: [Users]
+      summary: Upsert FCM token untuk notifikasi
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertFCMTokenRequest'
+      responses:
+        '200':
+          description: Token berhasil disimpan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+    delete:
+      tags: [Users]
+      summary: Hapus FCM token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteFCMTokenRequest'
+      responses:
+        '200':
+          description: Token berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/all:
+    get:
+      tags: [Users]
+      summary: Admin - list semua user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Daftar user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListEnvelope'
+
+  /users/{id}:
+    patch:
+      tags: [Users]
+      summary: Admin - update user
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateUserRequest'
+      responses:
+        '200':
+          description: User berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+    delete:
+      tags: [Users]
+      summary: Admin - hapus user
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: User berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/pending/students:
+    get:
+      tags: [Users]
+      summary: Admin - list mahasiswa pending verifikasi
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Daftar mahasiswa pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingStudentListEnvelope'
+
+  /users/students/{id}/approve:
+    post:
+      tags: [Users]
+      summary: Admin - approve verifikasi mahasiswa
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveStudentRequest'
+      responses:
+        '200':
+          description: Mahasiswa berhasil diapprove
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/students/{id}/reject:
+    post:
+      tags: [Users]
+      summary: Admin - reject verifikasi mahasiswa
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectStudentRequest'
+      responses:
+        '200':
+          description: Mahasiswa berhasil direject
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/officials:
+    post:
+      tags: [Users]
+      summary: Admin - buat akun official (dekan/wakil dekan)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOfficialRequest'
+      responses:
+        '201':
+          description: Official dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /letters/templates:
+    get:
+      tags: [Letters]
+      summary: List template surat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Daftar template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateListEnvelope'
+
+  /letters/templates/upload:
+    post:
+      tags: [Letters]
+      summary: Admin - upload template surat (v2 + analisis placeholder)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadTemplateV2Multipart'
+      responses:
+        '201':
+          description: Template berhasil diupload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadTemplateV2Envelope'
+
+  /letters/template/{id}:
+    delete:
+      tags: [Letters]
+      summary: Admin - hapus template surat berdasarkan letter_type_id
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_type_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Template dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /letters/preview/{id}:
+    get:
+      tags: [Letters]
+      summary: Preview template (PDF)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_type_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: PDF preview template
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /letters/requirements/{id}:
+    get:
+      tags: [Letters]
+      summary: Ambil requirements lampiran untuk jenis surat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_type_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Requirements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LetterTypeRequirementsEnvelope'
+    put:
+      tags: [Letters]
+      summary: Admin - update requirements lampiran untuk jenis surat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_type_id
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentRequirementsRequest'
+      responses:
+        '200':
+          description: Requirements diupdate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /correspondence/letters:
+    get:
+      tags: [Correspondence]
+      summary: List surat (mahasiswa/admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [submitted, forwarded, approved, rejected]
+        - in: query
+          name: letter_type_id
+          schema: { type: integer }
+        - in: query
+          name: created_from
+          schema: { type: string, description: RFC3339 atau yyyy-mm-dd }
+        - in: query
+          name: created_to
+          schema: { type: string, description: RFC3339 atau yyyy-mm-dd }
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [created_at_desc, created_at_asc]
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Daftar surat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LetterListEnvelope'
+
+  /correspondence/forwarded:
+    get:
+      tags: [Correspondence]
+      summary: List surat forwarded untuk DEKAN/WAKIL_DEKAN
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: letter_type_id
+          schema: { type: integer }
+        - in: query
+          name: created_from
+          schema: { type: string }
+        - in: query
+          name: created_to
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [created_at_desc, created_at_asc]
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Daftar surat forwarded (assigned ke pejabat)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LetterListEnvelope'
+
+  /correspondence/drafts:
+    post:
+      tags: [Correspondence]
+      summary: Buat draft surat (mahasiswa)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDraftRequest'
+      responses:
+        '201':
+          description: Draft dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftEnvelope'
+
+  /correspondence/drafts/{id}:
+    patch:
+      tags: [Correspondence]
+      summary: Update draft surat (mahasiswa)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDraftRequest'
+      responses:
+        '200':
+          description: Draft diupdate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftEnvelope'
+
+  /correspondence/submit/{id}:
+    post:
+      tags: [Correspondence]
+      summary: Submit draft surat (mahasiswa)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Draft berhasil disubmit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvelope'
+
+  /correspondence/{id}:
+    delete:
+      tags: [Correspondence]
+      summary: Hapus surat (mahasiswa pemilik / admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Surat dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /correspondence/preview/{id}:
+    get:
+      tags: [Correspondence]
+      summary: Preview surat (PDF)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: PDF preview surat
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /correspondence/history/{id}:
+    get:
+      tags: [Correspondence]
+      summary: Detail surat + riwayat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Detail dan riwayat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryEnvelope'
+
+  /correspondence/approve/{id}:
+    patch:
+      tags: [Correspondence]
+      summary: Approve / reject / forward surat
+      description: |
+        ADMIN:
+        - forward (status submitted → forwarded)
+        - approve/reject pada status submitted
+
+        DEKAN/WAKIL_DEKAN:
+        - approve/reject pada status forwarded (hanya jika surat ditugaskan ke pejabat tsb)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveLetterRequest'
+      responses:
+        '200':
+          description: Aksi diproses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvelope'
+
+  /correspondence/attachments/{id}:
+    post:
+      tags: [Correspondence]
+      summary: Upload lampiran surat
+      description: |
+        Multipart upload.
+
+        Opsi:
+        - Single: gunakan field file + key
+        - Multiple: gunakan field files[] + keys[] (jumlah keys harus sama dengan files)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: letter_id
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadAttachmentsMultipart'
+      responses:
+        '201':
+          description: Lampiran terupload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAttachmentsEnvelope'
+
+  /notifications/recent:
+    get:
+      tags: [Notifications]
+      summary: List notifikasi terbaru
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: days
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 30
+            default: 7
+      responses:
+        '200':
+          description: Daftar notifikasi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListEnvelope'
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Tandai notifikasi dibaca
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Notifikasi ditandai dibaca
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /notifications/test:
+    post:
+      tags: [Notifications]
+      summary: Kirim notifikasi test ke user sendiri
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendTestNotificationRequest'
+      responses:
+        '200':
+          description: Notifikasi diproses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendTestEnvelope'
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+  schemas:
+    BasicEnvelope:
+      type: object
+      required: [status_code, message]
+      properties:
+        status_code: { type: integer }
+        message: { type: string }
+        data:
+          nullable: true
+          description: Optional payload
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+
+    TokenEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TokenResponse'
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token: { type: string }
+
+    RegisterStudentMultipart:
+      type: object
+      required: [name, nim, email, password, program_studi, angkatan, kredensial]
+      properties:
+        name: { type: string }
+        nim: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+        program_studi: { type: string }
+        angkatan: { type: integer }
+        kredensial:
+          type: string
+          format: binary
+
+    RegisterWithKRSMultipart:
+      type: object
+      required: [email, password, krs]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+        krs:
+          type: string
+          format: binary
+
+    KRSPreviewResponse:
+      type: object
+      required: [user_id, name, nim, program_studi, angkatan]
+      properties:
+        user_id: { type: integer }
+        name: { type: string }
+        nim: { type: string }
+        program_studi: { type: string }
+        angkatan: { type: integer }
+
+    KRSPreviewEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/KRSPreviewResponse'
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    ResendVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+
+    MeResponse:
+      type: object
+      required: [user_id, name, email, roles, is_active, created_at]
+      properties:
+        user_id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        profile_photo: { type: string, nullable: true }
+        roles:
+          type: array
+          items: { type: string }
+        is_active: { type: boolean }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+        student_id: { type: integer, nullable: true }
+        nim: { type: string, nullable: true }
+        program_studi: { type: string, nullable: true }
+        angkatan: { type: integer, nullable: true }
+        kredensial_path: { type: string, nullable: true }
+        admin_verification_status: { type: string, nullable: true }
+        admin_verified_at: { type: string, format: date-time, nullable: true }
+        rejection_reason: { type: string, nullable: true }
+
+        official_id: { type: integer, nullable: true }
+        nip: { type: string, nullable: true }
+        pangkat: { type: string, nullable: true }
+        jabatan: { type: string, nullable: true }
+        signature: { type: string, nullable: true }
+        is_on_duty: { type: boolean, nullable: true }
+
+    MeEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/MeResponse'
+
+    UpdateMyProfileRequest:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        profile_photo: { type: string, nullable: true }
+
+    UpsertFCMTokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+        platform: { type: string, nullable: true, description: web/android/ios }
+
+    DeleteFCMTokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    UserListResponse:
+      type: object
+      required: [user_id, name, email, roles, is_active, created_at]
+      properties:
+        user_id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        roles:
+          type: array
+          items: { type: string }
+        is_active: { type: boolean }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        student_id: { type: integer, nullable: true }
+        admin_verification_status: { type: string, nullable: true }
+        admin_verified_at: { type: string, format: date-time, nullable: true }
+        rejection_reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    UserListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserListResponse'
+
+    PendingStudentResponse:
+      type: object
+      required: [student_id, user_id, name, email, nim, program_studi, angkatan, admin_verification_status, created_at]
+      properties:
+        student_id: { type: integer }
+        user_id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        nim: { type: string }
+        program_studi: { type: string }
+        angkatan: { type: integer }
+        kredensial: { type: string, nullable: true }
+        admin_verification_status: { type: string }
+        admin_verified_at: { type: string, format: date-time, nullable: true }
+        rejection_reason: { type: string, nullable: true }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    PendingStudentListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/PendingStudentResponse'
+
+    RejectStudentRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+
+    ApproveStudentRequest:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        nim: { type: string, nullable: true }
+        program_studi: { type: string, nullable: true }
+        angkatan: { type: integer, nullable: true }
+
+    CreateOfficialRequest:
+      type: object
+      required: [name, email, password, role_code, jabatan]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+        role_code:
+          type: string
+          enum: [DEKAN, WAKIL_DEKAN]
+        nip: { type: string, nullable: true }
+        pangkat: { type: string, nullable: true }
+        jabatan: { type: string }
+        signature: { type: string, nullable: true }
+
+    TemplateListItem:
+      type: object
+      required: [id, letter_type_id, code, name, description, file_path, file_type, created_by, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        letter_type_id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        file_path: { type: string }
+        file_type: { type: string }
+        created_by: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TemplateListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TemplateListItem'
+
+    UploadTemplateV2Multipart:
+      type: object
+      required: [file]
+      properties:
+        letter_type_id:
+          type: string
+          description: Isi jika memilih tipe surat yang sudah ada
+        code:
+          type: string
+          description: Wajib jika letter_type_id tidak diisi
+        name:
+          type: string
+          description: Wajib jika letter_type_id tidak diisi
+        description:
+          type: string
+        file:
+          type: string
+          format: binary
+
+    TemplateUploadV2Data:
+      type: object
+      required: [letter_type_id, code, name, description, file_path, placeholders, auto_filled_keys, required_payload_keys]
+      properties:
+        letter_type_id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        file_path: { type: string }
+        placeholders:
+          type: array
+          items: { type: string }
+        auto_filled_keys:
+          type: array
+          items: { type: string }
+        required_payload_keys:
+          type: array
+          items: { type: string }
+
+    UploadTemplateV2Envelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TemplateUploadV2Data'
+
+    AttachmentRequirement:
+      type: object
+      required: [key, label, required]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        required: { type: boolean }
+        accept: { type: string, nullable: true }
+
+    UpdateAttachmentRequirementsRequest:
+      type: object
+      required: [requirements]
+      properties:
+        requirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentRequirement'
+
+    LetterTypeRequirementsResponse:
+      type: object
+      required: [letter_type_id, code, name, requirements]
+      properties:
+        letter_type_id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        requirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentRequirement'
+
+    LetterTypeRequirementsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LetterTypeRequirementsResponse'
+
+    CreateDraftRequest:
+      type: object
+      required: [letter_type_id, subject, payload]
+      properties:
+        letter_type_id: { type: integer }
+        subject: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+
+    UpdateDraftRequest:
+      type: object
+      properties:
+        subject: { type: string, nullable: true }
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    DraftData:
+      type: object
+      required: [id, letter_type_id, subject, status, file_path, payload, created_at]
+      properties:
+        id: { type: integer }
+        letter_type_id: { type: integer }
+        subject: { type: string }
+        status: { type: string }
+        file_path: { type: string }
+        preview_url: { type: string, nullable: true }
+        payload:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+
+    DraftEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DraftData'
+
+    PreviewResponse:
+      type: object
+      required: [id, preview_url]
+      properties:
+        id: { type: integer }
+        preview_url: { type: string }
+
+    PreviewEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PreviewResponse'
+
+    LetterTypeSummary:
+      type: object
+      required: [id, code, name]
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+
+    StudentSummary:
+      type: object
+      required: [student_id, user_id, name, nim]
+      properties:
+        student_id: { type: integer }
+        user_id: { type: integer }
+        name: { type: string }
+        nim: { type: string }
+
+    LetterListItem:
+      type: object
+      required: [id, subject, status, letter_type, preview_url, history_url, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        subject: { type: string }
+        status: { type: string }
+        letter_number: { type: string, nullable: true }
+        letter_type:
+          $ref: '#/components/schemas/LetterTypeSummary'
+        student:
+          $ref: '#/components/schemas/StudentSummary'
+        preview_url: { type: string }
+        history_url: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PaginationMeta:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    LetterListData:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LetterListItem'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    LetterListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LetterListData'
+
+    ApproveLetterRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [approve, reject, forward]
+        signed_by_role:
+          type: string
+          description: Wajib untuk action=forward (dekan/wakil_dekan)
+          enum: [dekan, wakil_dekan]
+        letter_number:
+          type: string
+          description: Wajib untuk action=approve
+        notes:
+          type: string
+
+    AttachmentItem:
+      type: object
+      required: [id, file_path]
+      properties:
+        id: { type: integer }
+        key: { type: string, nullable: true }
+        file_path: { type: string }
+        file_type: { type: string, nullable: true }
+
+    LetterHistoryItem:
+      type: object
+      required: [id, action, created_at]
+      properties:
+        id: { type: integer }
+        action: { type: string }
+        notes: { type: string, nullable: true }
+        actor:
+          type: object
+          nullable: true
+          properties:
+            user_id: { type: integer }
+            name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    LetterHistoryDetail:
+      type: object
+      required: [id, letter_type_id, subject, status, payload, attachments, preview_url, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        letter_type_id: { type: integer }
+        subject: { type: string }
+        status: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentItem'
+        preview_url: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    LetterHistoryAndDetailData:
+      type: object
+      required: [letter, histories]
+      properties:
+        letter:
+          $ref: '#/components/schemas/LetterHistoryDetail'
+        histories:
+          type: array
+          items:
+            $ref: '#/components/schemas/LetterHistoryItem'
+
+    HistoryEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LetterHistoryAndDetailData'
+
+    UploadAttachmentsMultipart:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+        key:
+          type: string
+          description: key untuk single file
+        keys:
+          type: array
+          items: { type: string }
+          description: keys untuk multiple files
+
+    UploadAttachmentsResponse:
+      type: object
+      required: [letter_id, attachments]
+      properties:
+        letter_id: { type: integer }
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentItem'
+
+    UploadAttachmentsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UploadAttachmentsResponse'
+
+    SendTestNotificationRequest:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string }
+        body: { type: string }
+        data:
+          type: object
+          additionalProperties: { type: string }
+          nullable: true
+
+    SendResult:
+      type: object
+      required: [tokens, success, failure, revoked]
+      properties:
+        tokens: { type: integer }
+        success: { type: integer }
+        failure: { type: integer }
+        revoked: { type: integer }
+
+    SendTestEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SendResult'
+
+    NotificationItem:
+      type: object
+      required: [id, title, body, data, is_read, created_at]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        body: { type: string }
+        data:
+          type: object
+          additionalProperties: { type: string }
+        is_read: { type: boolean }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    NotificationListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BasicEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/NotificationItem'
