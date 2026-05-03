@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -22,6 +23,8 @@ import (
 )
 
 func main() {
+	ensureWorkingDirectory()
+
 	// Load global configuration
 	config.Load()
 
@@ -33,6 +36,20 @@ func main() {
 
 	// Default behavior → run HTTP server
 	server.Run()
+}
+
+func ensureWorkingDirectory() {
+	exePath, err := os.Executable()
+	if err != nil {
+		return
+	}
+	exeDir := filepath.Dir(exePath)
+	if exeDir == "" {
+		return
+	}
+	if err := os.Chdir(exeDir); err != nil {
+		fmt.Printf("warning: could not switch working directory to %s: %v\n", exeDir, err)
+	}
 }
 
 func handleCLI() {

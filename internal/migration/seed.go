@@ -84,20 +84,35 @@ func ParseSeedTargets(spec string) (SeedTargets, error) {
 }
 
 func findAnyDocxTemplatePath() (string, error) {
-	dir := filepath.Join("public", "letter-template")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("cannot read template directory %s: %w", dir, err)
+	candidates := []string{
+		filepath.Join("public", "letter-template"),
+		filepath.Join("/app", "public", "letter-template"),
 	}
-	for _, e := range entries {
-		if e.IsDir() {
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		if exeDir != "" {
+			candidates = append(candidates, filepath.Join(exeDir, "public", "letter-template"))
+		}
+	}
+
+	var tried []string
+	for _, dir := range candidates {
+		tried = append(tried, dir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
 			continue
 		}
-		if strings.EqualFold(filepath.Ext(e.Name()), ".docx") {
-			return filepath.Join(dir, e.Name()), nil
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if strings.EqualFold(filepath.Ext(e.Name()), ".docx") {
+				return filepath.Join(dir, e.Name()), nil
+			}
 		}
 	}
-	return "", fmt.Errorf("no .docx template found under %s", dir)
+
+	return "", fmt.Errorf("no .docx template found; tried: %s", strings.Join(tried, ", "))
 }
 
 // SeedSelected allows seeding specific datasets (e.g. only users) and can be

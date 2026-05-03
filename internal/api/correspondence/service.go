@@ -779,11 +779,12 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 				return errs.BadRequest("Surat tidak dalam status yang dapat diteruskan")
 			}
 		case "approve", "reject":
-			if letter.Status == statusSubmitted {
+			switch letter.Status {
+			case statusSubmitted:
 				if !isAdmin {
 					return errs.Forbidden("Hanya admin yang dapat memproses surat pada tahap ini")
 				}
-			} else if letter.Status == statusForwarded {
+			case statusForwarded:
 				if !isOfficialRole {
 					return errs.Forbidden("Hanya pejabat yang dapat memproses surat forwarded")
 				}
@@ -798,7 +799,7 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
 					return err
 				}
-			} else {
+			default:
 				return errs.BadRequest("Surat tidak dalam status yang dapat diproses")
 			}
 		default:
@@ -831,9 +832,10 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			normalized = strings.ReplaceAll(normalized, "_", " ")
 			normalized = strings.Join(strings.Fields(normalized), " ")
 			roleCode := ""
-			if normalized == "dekan" {
+			switch normalized {
+			case "dekan":
 				roleCode = "DEKAN"
-			} else if normalized == "wakil dekan" {
+			case "wakil dekan":
 				roleCode = "WAKIL_DEKAN"
 			}
 			if roleCode == "" {
