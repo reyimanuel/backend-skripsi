@@ -16,11 +16,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 FROM debian:bookworm-slim AS runtime
 
-# LibreOffice for DOCX->PDF conversion + basic fonts
+# LibreOffice for DOCX->PDF conversion, Tesseract OCR for KRS extraction, + basic fonts
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates tzdata \
         libreoffice-writer libreoffice-core libreoffice-common \
+        tesseract-ocr tesseract-ocr-ind \
         fontconfig fonts-dejavu-core fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
