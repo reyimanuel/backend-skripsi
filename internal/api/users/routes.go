@@ -33,6 +33,6 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		admin.GET("/pending/students", handler.GetPendingStudents)
 		admin.POST("/students/:id/approve", handler.ApproveStudent)
 		admin.POST("/students/:id/reject", handler.RejectStudent)
-		admin.POST("/officials", handler.CreateOfficial)
+		admin.POST("/staffs", handler.CreateStaff)
 	}
 }

@@ -5,19 +5,26 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"image"
 	"io"
 	"log"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 func findLibreOfficeBinary() (string, error) {
@@ -286,6 +293,7 @@ func templateAutoFilledKeys() map[string]struct{} {
 		"pangkat":       {},
 		"jabatan":       {},
 		"ttd":           {},
+		"tanda_tangan":  {},
 		"signature":     {},
 	}
 }
@@ -420,6 +428,263 @@ func escapeXMLText(s string) string {
 	return buf.String()
 }
 
+const docxImageDirectivePrefix = "__DOCX_IMAGE__:"
+
+// DocxImage marks a stored server path (usually under public/...) as an image
+// that should be embedded into the generated DOCX when used as a placeholder value.
+// Example: data["tanda_tangan"] = helpers.DocxImage(official.Signature)
+func DocxImage(storedPath string) string {
+	p := strings.TrimSpace(storedPath)
+	if p == "" {
+		return ""
+	}
+	return docxImageDirectivePrefix + p
+}
+
+type docxImageSpec struct {
+	sourceStoredPath string
+	fsPath           string
+	ext              string
+	contentType      string
+	data             []byte
+	mediaFileName    string // e.g. <uuid>.png
+	zipPath          string // e.g. word/media/<uuid>.png
+	relTarget        string // e.g. media/<uuid>.png
+	cx               int64
+	cy               int64
+}
+
+func resolvePublicStoredPathToFSPath(storedPath string) (string, error) {
+	p := strings.TrimSpace(storedPath)
+	if p == "" {
+		return "", fmt.Errorf("empty image path")
+	}
+	// normalize slashes and ensure no traversal
+	p = strings.ReplaceAll(p, "\\", "/")
+	p = strings.TrimPrefix(p, "/")
+	clean := path.Clean("/" + p)
+	clean = strings.TrimPrefix(clean, "/")
+	if !strings.HasPrefix(clean, "public/") {
+		return "", fmt.Errorf("signature path must be under public/: %q", storedPath)
+	}
+	return filepath.FromSlash(clean), nil
+}
+
+func detectImageContentTypeAndExt(filePath string, data []byte) (contentType string, ext string) {
+	ext = strings.TrimPrefix(strings.ToLower(filepath.Ext(filePath)), ".")
+	ct := http.DetectContentType(data)
+	if ct == "image/png" {
+		contentType = "image/png"
+		if ext == "" {
+			ext = "png"
+		}
+		return
+	}
+	if ct == "image/jpeg" {
+		contentType = "image/jpeg"
+		if ext == "" {
+			ext = "jpg"
+		}
+		if ext == "jpeg" {
+			ext = "jpg"
+		}
+		return
+	}
+	// Fallback by extension
+	switch ext {
+	case "png":
+		return "image/png", "png"
+	case "jpg", "jpeg":
+		return "image/jpeg", "jpg"
+	default:
+		return ct, ext
+	}
+}
+
+func loadDocxImageSpec(storedPath string) (*docxImageSpec, error) {
+	fsPath, err := resolvePublicStoredPathToFSPath(storedPath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(fsPath)
+	if err != nil {
+		return nil, fmt.Errorf("read signature image: %w", err)
+	}
+	ct, ext := detectImageContentTypeAndExt(fsPath, data)
+	if ct != "image/png" && ct != "image/jpeg" {
+		return nil, fmt.Errorf("unsupported signature image type: %s", ct)
+	}
+
+	// Determine size in EMU. If decode fails, fall back to a reasonable default.
+	const emuPerPx = 9525
+	defaultW := int64(220 * emuPerPx)
+	defaultH := int64(80 * emuPerPx)
+	cx, cy := defaultW, defaultH
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil && cfg.Width > 0 && cfg.Height > 0 {
+		cx = int64(cfg.Width) * emuPerPx
+		cy = int64(cfg.Height) * emuPerPx
+	}
+
+	// Clamp to a max box to avoid oversized signatures breaking layout.
+	maxW := int64(260 * emuPerPx)
+	maxH := int64(140 * emuPerPx)
+	scale := 1.0
+	if cx > maxW {
+		scale = math.Min(scale, float64(maxW)/float64(cx))
+	}
+	if cy > maxH {
+		scale = math.Min(scale, float64(maxH)/float64(cy))
+	}
+	if scale < 1.0 {
+		cx = int64(float64(cx) * scale)
+		cy = int64(float64(cy) * scale)
+	}
+	if cx <= 0 {
+		cx = defaultW
+	}
+	if cy <= 0 {
+		cy = defaultH
+	}
+
+	fileName := uuid.New().String() + "." + ext
+	return &docxImageSpec{
+		sourceStoredPath: storedPath,
+		fsPath:           fsPath,
+		ext:              ext,
+		contentType:      ct,
+		data:             data,
+		mediaFileName:    fileName,
+		zipPath:          filepath.ToSlash(filepath.Join("word", "media", fileName)),
+		relTarget:        filepath.ToSlash(filepath.Join("media", fileName)),
+		cx:               cx,
+		cy:               cy,
+	}, nil
+}
+
+func relsPathForDocxPart(partName string) string {
+	// Relationship part naming: word/_rels/<base>.rels (e.g., document.xml -> document.xml.rels)
+	base := path.Base(partName)
+	return filepath.ToSlash(filepath.Join("word", "_rels", base+".rels"))
+}
+
+func ensureDocxContentTypeDefault(typesXML []byte, ext string, contentType string) ([]byte, error) {
+	if ext == "" || contentType == "" {
+		return typesXML, nil
+	}
+	s := string(typesXML)
+	needle := "Extension=\"" + ext + "\""
+	if strings.Contains(s, needle) {
+		return typesXML, nil
+	}
+	insert := fmt.Sprintf(`<Default Extension="%s" ContentType="%s"/>`, ext, contentType)
+	idx := strings.LastIndex(s, "</Types>")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid [Content_Types].xml")
+	}
+	s = s[:idx] + insert + s[idx:]
+	return []byte(s), nil
+}
+
+func ensureDocxRelationshipsXML(existing []byte) []byte {
+	if len(existing) > 0 {
+		return existing
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`)
+}
+
+func addDocxImageRelationship(relsXML []byte, target string) ([]byte, string, error) {
+	relsXML = ensureDocxRelationshipsXML(relsXML)
+	s := string(relsXML)
+	// If target already exists as an image relationship, reuse its Id.
+	if strings.Contains(s, `Target="`+target+`"`) {
+		re := regexp.MustCompile(`Id="(rId[0-9]+)"[^>]*Target="` + regexp.QuoteMeta(target) + `"`)
+		if m := re.FindStringSubmatch(s); len(m) == 2 {
+			return relsXML, m[1], nil
+		}
+	}
+
+	maxID := 0
+	idRe := regexp.MustCompile(`Id="rId(\d+)"`)
+	for _, m := range idRe.FindAllStringSubmatch(s, -1) {
+		if len(m) != 2 {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		if n > maxID {
+			maxID = n
+		}
+	}
+	rId := fmt.Sprintf("rId%d", maxID+1)
+	insert := fmt.Sprintf(`<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="%s"/>`, rId, target)
+	idx := strings.LastIndex(s, "</Relationships>")
+	if idx < 0 {
+		return nil, "", fmt.Errorf("invalid relationships xml")
+	}
+	s = s[:idx] + insert + s[idx:]
+	return []byte(s), rId, nil
+}
+
+func docxInlineDrawingXML(rId string, name string, cx, cy int64, docPrID int64) string {
+	if name == "" {
+		name = "signature"
+	}
+	if docPrID <= 0 {
+		docPrID = 1
+	}
+	// Note: namespaces for a/pic are declared locally; wp/r must be present in the DOCX root.
+	return fmt.Sprintf(
+		`<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="%d" cy="%d"/><wp:docPr id="%d" name="%s"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="%s"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`,
+		cx, cy,
+		docPrID, escapeXMLText(name),
+		escapeXMLText(name),
+		rId,
+		cx, cy,
+	)
+}
+
+func replaceDocxPlaceholderWithDrawing(xmlContent string, key string, drawingXML string) (string, int) {
+	token := "{{" + key + "}}"
+	if !strings.Contains(xmlContent, token) {
+		return xmlContent, 0
+	}
+	re := regexp.MustCompile(`(?s)(<w:t[^>]*>)([^<]*?)` + regexp.QuoteMeta(token) + `([^<]*?)(</w:t>)`)
+	idxs := re.FindAllStringSubmatchIndex(xmlContent, -1)
+	if len(idxs) == 0 {
+		return xmlContent, 0
+	}
+
+	var b strings.Builder
+	b.Grow(len(xmlContent) + len(idxs)*len(drawingXML))
+	last := 0
+	for _, m := range idxs {
+		// Whole match
+		b.WriteString(xmlContent[last:m[0]])
+		openTag := xmlContent[m[2]:m[3]]
+		prefix := xmlContent[m[4]:m[5]]
+		suffix := xmlContent[m[6]:m[7]]
+		closeTag := xmlContent[m[8]:m[9]]
+
+		if prefix != "" {
+			b.WriteString(openTag)
+			b.WriteString(prefix)
+			b.WriteString(closeTag)
+		}
+		b.WriteString(drawingXML)
+		if suffix != "" {
+			b.WriteString(openTag)
+			b.WriteString(suffix)
+			b.WriteString(closeTag)
+		}
+
+		last = m[1]
+	}
+	b.WriteString(xmlContent[last:])
+	return b.String(), len(idxs)
+}
+
 // FillTemplate copies a .docx file from srcPath to dstPath while replacing
 // {{key}} placeholders with the corresponding values from data.
 // It works by treating the docx as a ZIP archive and doing string replacement
@@ -431,6 +696,56 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 	}
 	defer r.Close()
 
+	// Read all entries first so we can add media/rels/content-types updates.
+	entries := make(map[string][]byte, len(r.File)+8)
+	originalNames := make([]string, 0, len(r.File))
+	for _, f := range r.File {
+		originalNames = append(originalNames, f.Name)
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return err
+		}
+		entries[f.Name] = content
+	}
+
+	// Collect image directives from data.
+	imageByKey := make(map[string]*docxImageSpec)
+	for key, val := range data {
+		if !strings.HasPrefix(val, docxImageDirectivePrefix) {
+			continue
+		}
+		stored := strings.TrimSpace(strings.TrimPrefix(val, docxImageDirectivePrefix))
+		if stored == "" {
+			continue
+		}
+		spec, err := loadDocxImageSpec(stored)
+		if err != nil {
+			return err
+		}
+		imageByKey[key] = spec
+		entries[spec.zipPath] = spec.data
+	}
+
+	// Ensure content types include our image extensions.
+	if len(imageByKey) > 0 {
+		ctName := "[Content_Types].xml"
+		if ctXML, ok := entries[ctName]; ok {
+			for _, spec := range imageByKey {
+				updated, err := ensureDocxContentTypeDefault(ctXML, spec.ext, spec.contentType)
+				if err != nil {
+					return err
+				}
+				ctXML = updated
+			}
+			entries[ctName] = ctXML
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 		return err
 	}
@@ -441,34 +756,78 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 	}
 	defer out.Close()
 
+	// Apply placeholder replacements to text-bearing XML parts.
+	var docPrCounter int64 = 1
+	for _, name := range originalNames {
+		content := entries[name]
+		if !isDocxTextXMLPart(name) {
+			continue
+		}
+		s := normalizeDocxPlaceholders(string(content))
+
+		// First embed images (if any), then apply text replacements.
+		for key, spec := range imageByKey {
+			token := "{{" + key + "}}"
+			if !strings.Contains(s, token) {
+				continue
+			}
+
+			relsName := relsPathForDocxPart(name)
+			relsXML := entries[relsName]
+			updatedRels, rId, err := addDocxImageRelationship(relsXML, spec.relTarget)
+			if err != nil {
+				return err
+			}
+			entries[relsName] = updatedRels
+
+			drawing := docxInlineDrawingXML(rId, spec.mediaFileName, spec.cx, spec.cy, docPrCounter)
+			docPrCounter++
+			// Replace all occurrences for this key in this part.
+			for i := 0; i < 10 && strings.Contains(s, token); i++ {
+				var n int
+				s, n = replaceDocxPlaceholderWithDrawing(s, key, drawing)
+				if n == 0 {
+					break
+				}
+			}
+		}
+
+		for key, val := range data {
+			if _, isImage := imageByKey[key]; isImage {
+				continue
+			}
+			s = strings.ReplaceAll(s, "{{"+key+"}}", escapeXMLText(val))
+		}
+		entries[name] = []byte(s)
+	}
+
 	w := zip.NewWriter(out)
 	defer w.Close()
 
-	for _, f := range r.File {
-		rc, err := f.Open()
+	// Write original files first, then any new ones (media/rels) that weren't present.
+	written := make(map[string]struct{}, len(entries))
+	for _, name := range originalNames {
+		content, ok := entries[name]
+		if !ok {
+			continue
+		}
+		fw, err := w.Create(name)
 		if err != nil {
 			return err
 		}
-
-		content, err := io.ReadAll(rc)
-		rc.Close()
+		if _, err := fw.Write(content); err != nil {
+			return err
+		}
+		written[name] = struct{}{}
+	}
+	for name, content := range entries {
+		if _, ok := written[name]; ok {
+			continue
+		}
+		fw, err := w.Create(name)
 		if err != nil {
 			return err
 		}
-
-		if isDocxTextXMLPart(f.Name) {
-			s := normalizeDocxPlaceholders(string(content))
-			for key, val := range data {
-				s = strings.ReplaceAll(s, "{{"+key+"}}", escapeXMLText(val))
-			}
-			content = []byte(s)
-		}
-
-		fw, err := w.Create(f.Name) // ← FIX DI SINI
-		if err != nil {
-			return err
-		}
-
 		if _, err := fw.Write(content); err != nil {
 			return err
 		}

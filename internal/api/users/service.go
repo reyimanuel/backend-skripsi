@@ -602,11 +602,16 @@ func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Respo
 	return &Response{StatusCode: http.StatusOK, Message: "Email verifikasi berhasil dikirim ulang"}, nil
 }
 
-func (s *Service) CreateOfficial(adminID uint, req CreateOfficialRequest) (*Response, error) {
+func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFile *multipart.FileHeader) (*Response, error) {
+	roleCode := strings.ToUpper(strings.TrimSpace(req.RoleCode))
+	if roleCode == "" {
+		return nil, errs.BadRequest("role wajib diisi")
+	}
+
 	if _, err := s.Repo.GetByEmail(req.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking official email uniqueness: email=%q err=%v", req.Email, err)
+		log.Printf("error checking staff email uniqueness: email=%q err=%v", req.Email, err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -615,43 +620,108 @@ func (s *Service) CreateOfficial(adminID uint, req CreateOfficialRequest) (*Resp
 		return nil, errs.InternalServerError("gagal memproses password")
 	}
 
-	role, err := s.Repo.GetRoleByCode(s.Repo.DB, req.RoleCode)
+	role, err := s.Repo.GetRoleByCode(s.Repo.DB, roleCode)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.BadRequest("Role official tidak ditemukan")
+			return nil, errs.BadRequest("Role staff tidak ditemukan")
 		}
-		log.Printf("error fetching official role: role=%q err=%v", req.RoleCode, err)
+		log.Printf("error fetching staff role: role=%q err=%v", roleCode, err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+
+	isOfficialRole := roleCode == "DEKAN" || roleCode == "WAKIL_DEKAN"
+	signaturePath := ""
+	if isOfficialRole {
+		if strings.TrimSpace(req.Jabatan) == "" {
+			return nil, errs.BadRequest("jabatan wajib diisi untuk role dekan/wakil dekan")
+		}
+
+		if signatureFile == nil {
+			return nil, errs.BadRequest("File signature wajib dilampirkan untuk role dekan/wakil dekan")
+		}
+
+		ext := strings.ToLower(filepath.Ext(signatureFile.Filename))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+			return nil, errs.BadRequest("file signature harus berupa gambar (jpg/jpeg/png)")
+		}
+
+		nip := strings.TrimSpace(req.NIP)
+		if len(nip) > 50 {
+			return nil, errs.BadRequest("NIP maksimal 50 karakter")
+		}
+		pangkat := strings.TrimSpace(req.Pangkat)
+		if len(pangkat) > 100 {
+			return nil, errs.BadRequest("Pangkat maksimal 100 karakter")
+		}
+		jabatan := strings.TrimSpace(req.Jabatan)
+		if len(jabatan) > 100 {
+			return nil, errs.BadRequest("Jabatan maksimal 100 karakter")
+		}
+
+		fileName := helpers.GenerateUniqueFileName(signatureFile.Filename)
+		signaturePath = filepath.Join("public", "images", "signatures", fileName)
+		if err := helpers.SaveUploadedFile(signatureFile, signaturePath); err != nil {
+			log.Printf("error menyimpan file signature: %v", err)
+			return nil, errs.InternalServerError("gagal menyimpan file signature")
+		}
+	}
+
+	roles := []migration.Role{*role}
+	if roleCode != "ADMIN" {
+		adminRole, err := s.Repo.GetRoleByCode(s.Repo.DB, "ADMIN")
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, errs.InternalServerError("konfigurasi role admin tidak ditemukan")
+			}
+			log.Printf("error fetching admin role for staff creation: err=%v", err)
+			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+		}
+		roles = append([]migration.Role{*adminRole}, roles...)
 	}
 
 	user := &migration.User{
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: hashedPwd,
-		Roles:    []migration.Role{*role},
+		Roles:    roles,
 		IsActive: true,
 	}
 
-	official := &migration.Official{
-		NIP:       req.NIP,
-		Pangkat:   req.Pangkat,
-		Jabatan:   req.Jabatan,
-		Signature: req.Signature,
-		IsOnDuty:  true,
-	}
+	createErr := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
 
-	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
-		return s.Repo.CreateOfficialWithUser(tx, user, official)
-	}); err != nil {
-		log.Printf("error creating official by admin %d: %v", adminID, err)
-		return nil, errs.InternalServerError("gagal membuat akun official")
+		if !isOfficialRole {
+			return nil
+		}
+
+		official := &migration.Official{
+			UserID:    user.ID,
+			NIP:       strings.TrimSpace(req.NIP),
+			Pangkat:   strings.TrimSpace(req.Pangkat),
+			Jabatan:   strings.TrimSpace(req.Jabatan),
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		}
+
+		return tx.Create(official).Error
+	})
+	if createErr != nil {
+		log.Printf("error creating staff by admin %d: %v", adminID, createErr)
+		if signaturePath != "" {
+			if err := os.Remove(signaturePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("gagal menghapus file signature %s: %v", signaturePath, err)
+			}
+		}
+		return nil, errs.InternalServerError("gagal membuat akun staff")
 	}
 
 	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
-		log.Printf("error sending official verification email: %v", err)
+		log.Printf("error sending staff verification email: %v", err)
 	}
 
-	return &Response{StatusCode: http.StatusCreated, Message: "Official berhasil dibuat. Silakan verifikasi email official."}, nil
+	return &Response{StatusCode: http.StatusCreated, Message: "Staff berhasil dibuat. Silakan verifikasi email staff."}, nil
 }
 
 // RegisterWithKRS registers a new student by extracting their data automatically

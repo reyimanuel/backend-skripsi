@@ -135,15 +135,15 @@ type MeResponse struct {
 	IsOnDuty   *bool  `json:"is_on_duty,omitempty"`
 }
 
-type CreateOfficialRequest struct {
-	Name      string `json:"name" binding:"required"`
-	Email     string `json:"email" binding:"required,email"`
-	Password  string `json:"password" binding:"required,min=6"`
-	RoleCode  string `json:"role_code" binding:"required,oneof=DEKAN WAKIL_DEKAN"`
-	NIP       string `json:"nip"`
-	Pangkat   string `json:"pangkat"`
-	Jabatan   string `json:"jabatan" binding:"required"`
-	Signature string `json:"signature"`
+type CreateStaffRequest struct {
+	Name     string `form:"name" binding:"required"`
+	Email    string `form:"email" binding:"required,email"`
+	Password string `form:"password" binding:"required,min=6"`
+	RoleCode string `form:"role_code" binding:"required,oneof=ADMIN DEKAN WAKIL_DEKAN"`
+
+	NIP     string `form:"nip"`
+	Pangkat string `form:"pangkat"`
+	Jabatan string `form:"jabatan"`
 }
 
 // AdminUpdateUserRequest is used by admin to update a user account.

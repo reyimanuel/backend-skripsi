@@ -337,21 +337,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/BasicEnvelope'
 
-  /users/officials:
+  /users/staffs:
     post:
       tags: [Users]
-      summary: Admin - buat akun official (dekan/wakil dekan)
+      summary: Admin - buat akun staff (dekan/wakil dekan)
       security:
         - bearerAuth: []
       requestBody:
         required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: '#/components/schemas/CreateOfficialRequest'
+              $ref: '#/components/schemas/CreateStaffRequest'
       responses:
         '201':
-          description: Official dibuat
+          description: Staff dibuat
           content:
             application/json:
               schema:
@@ -1042,20 +1042,20 @@ components:
         program_studi: { type: string, nullable: true }
         angkatan: { type: integer, nullable: true }
 
-    CreateOfficialRequest:
+    CreateStaffRequest:
       type: object
-      required: [name, email, password, role_code, jabatan]
+      required: [name, email, password, role_code]
       properties:
         name: { type: string }
         email: { type: string, format: email }
         password: { type: string, minLength: 6 }
         role_code:
           type: string
-          enum: [DEKAN, WAKIL_DEKAN]
+          enum: [ADMIN, DEKAN, WAKIL_DEKAN]
         nip: { type: string, nullable: true }
         pangkat: { type: string, nullable: true }
-        jabatan: { type: string }
-        signature: { type: string, nullable: true }
+        jabatan: { type: string, nullable: true }
+        signature: { type: string, format: binary, nullable: true }
 
     TemplateListItem:
       type: object

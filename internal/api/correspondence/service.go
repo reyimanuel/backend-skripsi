@@ -1410,8 +1410,10 @@ func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNu
 	enriched["pangkat"] = official.Pangkat
 	enriched["jabatan"] = official.Jabatan
 
-	// Optional placeholders (template-dependent). Note: FillTemplate does text replacement only.
+	// Optional placeholders (template-dependent).
+	// For templates using {{tanda_tangan}}, FillTemplate will embed the signature image into the DOCX.
 	enriched["ttd"] = official.User.Name
+	enriched["tanda_tangan"] = helpers.DocxImage(official.Signature)
 	enriched["signature"] = helpers.ToAbsoluteURL(official.Signature)
 	return enriched
 }

@@ -275,20 +275,28 @@ func (h *Handler) RejectStudent(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) CreateOfficial(ctx *gin.Context) {
+func (h *Handler) CreateStaff(ctx *gin.Context) {
 	adminID, err := middleware.GetUserID(ctx)
 	if err != nil {
 		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
 		return
 	}
 
-	var req CreateOfficialRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("Data official tidak valid"))
+	var req CreateStaffRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data staff tidak valid"))
+		log.Printf("error binding create staff payload: %v", err)
 		return
 	}
 
-	response, err := h.Service.CreateOfficial(adminID, req)
+	// signature is uploaded as multipart file under form field "signature".
+	// It is required only when role_code is DEKAN/WAKIL_DEKAN; service enforces that.
+	signatureFile, err := ctx.FormFile("signature")
+	if err != nil {
+		signatureFile = nil
+	}
+
+	response, err := h.Service.CreateStaff(adminID, req, signatureFile)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
