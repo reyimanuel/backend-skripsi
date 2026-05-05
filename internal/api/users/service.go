@@ -637,12 +637,12 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFil
 		}
 
 		if signatureFile == nil {
-			return nil, errs.BadRequest("File signature wajib dilampirkan untuk role dekan/wakil dekan")
+			return nil, errs.BadRequest("File tanda tangan wajib dilampirkan untuk role dekan/wakil dekan")
 		}
 
 		ext := strings.ToLower(filepath.Ext(signatureFile.Filename))
 		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-			return nil, errs.BadRequest("file signature harus berupa gambar (jpg/jpeg/png)")
+			return nil, errs.BadRequest("file tanda tangan harus berupa gambar (jpg/jpeg/png)")
 		}
 
 		nip := strings.TrimSpace(req.NIP)
@@ -667,17 +667,6 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFil
 	}
 
 	roles := []migration.Role{*role}
-	if roleCode != "ADMIN" {
-		adminRole, err := s.Repo.GetRoleByCode(s.Repo.DB, "ADMIN")
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errs.InternalServerError("konfigurasi role admin tidak ditemukan")
-			}
-			log.Printf("error fetching admin role for staff creation: err=%v", err)
-			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-		}
-		roles = append([]migration.Role{*adminRole}, roles...)
-	}
 
 	user := &migration.User{
 		Name:     req.Name,
