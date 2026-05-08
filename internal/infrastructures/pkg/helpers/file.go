@@ -627,7 +627,7 @@ func addDocxImageRelationship(relsXML []byte, target string) ([]byte, string, er
 	return []byte(s), rId, nil
 }
 
-func docxInlineDrawingXML(rId string, name string, cx, cy int64, docPrID int64) string {
+func docxAnchorDrawingXML(rId string, name string, cx, cy int64, docPrID int64) string {
 	if name == "" {
 		name = "signature"
 	}
@@ -636,7 +636,7 @@ func docxInlineDrawingXML(rId string, name string, cx, cy int64, docPrID int64) 
 	}
 	// Note: namespaces for a/pic are declared locally; wp/r must be present in the DOCX root.
 	return fmt.Sprintf(
-		`<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="%d" cy="%d"/><wp:docPr id="%d" name="%s"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="%s"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`,
+		`<w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="character"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="line"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="%d" cy="%d"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="%d" name="%s"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="%s"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>`,
 		cx, cy,
 		docPrID, escapeXMLText(name),
 		escapeXMLText(name),
@@ -780,7 +780,7 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 			}
 			entries[relsName] = updatedRels
 
-			drawing := docxInlineDrawingXML(rId, spec.mediaFileName, spec.cx, spec.cy, docPrCounter)
+			drawing := docxAnchorDrawingXML(rId, spec.mediaFileName, spec.cx, spec.cy, docPrCounter)
 			docPrCounter++
 			// Replace all occurrences for this key in this part.
 			for i := 0; i < 10 && strings.Contains(s, token); i++ {

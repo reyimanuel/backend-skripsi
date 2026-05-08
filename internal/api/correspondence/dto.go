@@ -76,6 +76,7 @@ type LetterHistoryDetail struct {
 	Status       string           `json:"status"`
 	Payload      map[string]any   `json:"payload"`
 	Attachments  []AttachmentItem `json:"attachments"`
+	Student      *StudentSummary  `json:"student,omitempty"`
 	PreviewURL   string           `json:"preview_url"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`

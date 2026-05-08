@@ -133,8 +133,12 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOffi
 }
 
 func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Response, error) {
-	// Force forwarded-only listing for officials.
-	q.Status = statusForwarded
+	// Filter by requested status, but restrict to valid official statuses.
+	status := strings.TrimSpace(strings.ToLower(q.Status))
+	if status != statusForwarded && status != statusApproved && status != statusRejected {
+		// Default to forwarded if invalid or empty.
+		status = statusForwarded
+	}
 
 	sort := strings.TrimSpace(q.Sort)
 	if sort != "" && sort != "created_at_desc" && sort != "created_at_asc" {
@@ -194,7 +198,7 @@ func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Respon
 		letters, count, err := s.Repo.ListLetters(tx, ListLettersParams{
 			SignedByID:  &signedByID,
 			Query:       q.Q,
-			Status:      statusForwarded,
+			Status:      status,
 			LetterType:  letterTypeID,
 			CreatedFrom: createdFrom,
 			CreatedTo:   createdTo,
@@ -1108,6 +1112,12 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 			}
 		}
 
+		student, err := s.UsersRepo.GetStudentByID(tx, letter.StudentID)
+		if err != nil {
+			log.Printf("error fetching student: letter_id=%d student_id=%d err=%v", letterID, letter.StudentID, err)
+			return errs.InternalServerError("Gagal mengambil data mahasiswa pemohon")
+		}
+
 		histories, err := s.Repo.ListHistoriesByLetterID(tx, letterID)
 		if err != nil {
 			log.Printf("error fetching histories: letter_id=%d err=%v", letterID, err)
@@ -1141,6 +1151,12 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 			Status:       letter.Status,
 			Payload:      payloadMap,
 			Attachments:  items,
+			Student: &StudentSummary{
+				StudentID: student.ID,
+				UserID:    student.UserID,
+				Name:      student.User.Name,
+				NIM:       student.NIM,
+			},
 			PreviewURL:   helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
 			CreatedAt:    letter.CreatedAt,
 			UpdatedAt:    letter.UpdatedAt,
