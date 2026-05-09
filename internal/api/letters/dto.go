@@ -51,16 +51,17 @@ type UploadTemplateV2Request struct {
 }
 
 type TemplateListItem struct {
-	ID           uint      `json:"id"`
-	LetterTypeID uint      `json:"letter_type_id"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	FilePath     string    `json:"file_path"`
-	FileType     string    `json:"file_type"`
-	CreatedBy    uint      `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                  uint      `json:"id"`
+	LetterTypeID        uint      `json:"letter_type_id"`
+	Code                string    `json:"code"`
+	Name                string    `json:"name"`
+	Description         string    `json:"description"`
+	FilePath            string    `json:"file_path"`
+	FileType            string    `json:"file_type"`
+	CreatedBy           uint      `json:"created_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	RequiredPayloadKeys []string  `json:"required_payload_keys"`
 }
 
 type TemplateUploadV2Data struct {

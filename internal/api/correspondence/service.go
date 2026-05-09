@@ -49,7 +49,6 @@ var blockedPayloadFields = map[string]struct{}{
 	"angkatan":      {},
 	"tanggal":       {},
 	"tahun_ajaran":  {},
-	"tujuan_surat":  {},
 	"nomor_surat":   {},
 	"official":      {},
 	"nip":           {},
@@ -272,16 +271,6 @@ func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Respo
 			return err
 		}
 
-		tujuan := ""
-		if req.Payload != nil {
-			if raw, ok := req.Payload["tujuan"]; ok {
-				tujuan = strings.TrimSpace(fmt.Sprint(raw))
-			}
-		}
-		if tujuan == "" {
-			return errs.BadRequest("tujuan surat wajib diisi")
-		}
-
 		// Ensure template exists for the type (so we don't allow drafting unusable letters)
 		template, err := s.Repo.GetTemplateByLetterType(tx, req.LetterTypeID)
 		if err != nil {
@@ -376,14 +365,6 @@ func (s *Service) UpdateDraftLetter(letterID uint, userID uint, req UpdateDraftR
 			incoming := buildSubmitPayload(req.Payload)
 			for k, v := range incoming {
 				payloadMap[k] = v
-			}
-
-			tujuan := ""
-			if raw, ok := payloadMap["tujuan"]; ok {
-				tujuan = strings.TrimSpace(fmt.Sprint(raw))
-			}
-			if tujuan == "" {
-				return errs.BadRequest("tujuan surat wajib diisi")
 			}
 
 			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
@@ -538,6 +519,7 @@ func extractTemplatePlaceholdersForLetterType(template *migration.LetterTemplate
 func missingTemplateKeysForPayload(template *migration.LetterTemplate, letterTypeID uint, payload map[string]any) []string {
 	placeholders := extractTemplatePlaceholdersForLetterType(template, letterTypeID)
 	ph := helpers.ClassifyTemplatePlaceholders(placeholders)
+
 	return helpers.MissingPayloadKeys(payload, ph.RequiredPayloadKeys)
 }
 
@@ -605,13 +587,6 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 			return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
 		}
 
-		tujuan := ""
-		if raw, ok := payloadMap["tujuan"]; ok {
-			tujuan = strings.TrimSpace(fmt.Sprint(raw))
-		}
-		if tujuan != "" {
-			payloadMap["tujuan_surat"] = tujuan
-		}
 		payloadMap["tanggal"] = helpers.FormatIndonesianDate(now)
 		payloadMap["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
 
@@ -1157,9 +1132,9 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 				Name:      student.User.Name,
 				NIM:       student.NIM,
 			},
-			PreviewURL:   helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
-			CreatedAt:    letter.CreatedAt,
-			UpdatedAt:    letter.UpdatedAt,
+			PreviewURL: helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
+			CreatedAt:  letter.CreatedAt,
+			UpdatedAt:  letter.UpdatedAt,
 		}
 
 		out = make([]LetterHistoryItem, 0, len(histories))
@@ -1405,15 +1380,6 @@ func buildSubmitPayload(payload map[string]any) map[string]any {
 
 func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNumber string, official *migration.Official) map[string]any {
 	enriched := copyPayload(payload, nil)
-
-	// Normalize tujuan field for templates that use tujuan_surat.
-	if raw, ok := enriched["tujuan_surat"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
-		if v, ok := enriched["tujuan"]; ok {
-			if tujuan := strings.TrimSpace(fmt.Sprint(v)); tujuan != "" {
-				enriched["tujuan_surat"] = tujuan
-			}
-		}
-	}
 
 	if raw, ok := enriched["tahun_ajaran"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
 		enriched["tahun_ajaran"] = helpers.GetCurrentAcademicYear()

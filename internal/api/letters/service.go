@@ -302,17 +302,24 @@ func (s *Service) GetAllTemplates() (*Response, error) {
 
 		items = make([]TemplateListItem, 0, len(templates))
 		for _, t := range templates {
+			var placeholders []string
+			if len(t.Placeholders) > 0 {
+				_ = json.Unmarshal(t.Placeholders, &placeholders)
+			}
+			analysis := helpers.ClassifyTemplatePlaceholders(placeholders)
+
 			items = append(items, TemplateListItem{
-				ID:           t.ID,
-				LetterTypeID: t.LetterTypeID,
-				Code:         t.LetterType.Code,
-				Name:         t.LetterType.Name,
-				Description:  t.LetterType.Description,
-				FilePath:     helpers.ToAbsoluteURL(t.FilePath),
-				FileType:     t.FileType,
-				CreatedBy:    t.CreatedBy,
-				CreatedAt:    t.CreatedAt,
-				UpdatedAt:    t.UpdatedAt,
+				ID:                  t.ID,
+				LetterTypeID:        t.LetterTypeID,
+				Code:                t.LetterType.Code,
+				Name:                t.LetterType.Name,
+				Description:         t.LetterType.Description,
+				FilePath:            helpers.ToAbsoluteURL(t.FilePath),
+				FileType:            t.FileType,
+				RequiredPayloadKeys: analysis.RequiredPayloadKeys,
+				CreatedBy:           t.CreatedBy,
+				CreatedAt:           t.CreatedAt,
+				UpdatedAt:           t.UpdatedAt,
 			})
 		}
 		return nil

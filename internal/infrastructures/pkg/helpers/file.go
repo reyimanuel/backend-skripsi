@@ -286,7 +286,6 @@ func templateAutoFilledKeys() map[string]struct{} {
 		"angkatan":      {},
 		"tanggal":       {},
 		"tahun_ajaran":  {},
-		"tujuan_surat":  {},
 		"nomor_surat":   {},
 		"official":      {},
 		"nip":           {},
