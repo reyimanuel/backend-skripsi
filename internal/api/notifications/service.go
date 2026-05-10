@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
 	"github.com/reyimanuel/letter-administration/internal/migration"
@@ -29,7 +30,7 @@ func (s *Service) SendTest(userID uint, req SendTestNotificationRequest) (*Respo
 		return nil, errs.BadRequest("Judul dan isi notifikasi wajib diisi")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.EmailTimeout)
 	defer cancel()
 
 	res, err := push.SendToUser(ctx, s.Repo.DB, userID, title, body, req.Data)

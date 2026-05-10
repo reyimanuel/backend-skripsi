@@ -125,13 +125,24 @@ func baseUserQuery(tx *gorm.DB) *gorm.DB {
 		Preload("Student", "admin_verification_status = ?", "approved")
 }
 
-func (r *Repository) GetPendingStudents(tx *gorm.DB) ([]migration.Student, error) {
+func (r *Repository) GetPendingStudents(tx *gorm.DB, page, pageSize int) ([]migration.Student, int64, error) {
 	var students []migration.Student
-	err := tx.Preload("User").
+	var total int64
+	
+	query := tx.Preload("User").
 		Where("admin_verification_status = ?", "pending").
-		Order("created_at DESC").
-		Find(&students).Error
-	return students, err
+		Order("created_at DESC")
+	
+	// Get total count
+	err := query.Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	
+	// Apply pagination
+	offset := (page - 1) * pageSize
+	err = query.Offset(offset).Limit(pageSize).Find(&students).Error
+	return students, total, err
 }
 
 func (r *Repository) UpdateStudentAdminVerification(tx *gorm.DB, studentID uint, status string, adminID *uint, reason string) error {
@@ -171,14 +182,25 @@ func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
 	return tx.Delete(&migration.User{}, userID).Error
 }
 
-func (r *Repository) GetAllUsers(tx *gorm.DB) ([]migration.User, error) {
+func (r *Repository) GetAllUsers(tx *gorm.DB, page, pageSize int) ([]migration.User, int64, error) {
 	var users []migration.User
-	err := baseUserQuery(tx).
+	var total int64
+	
+	query := baseUserQuery(tx).
 		Joins("LEFT JOIN students ON students.user_id = users.id").
 		Where("students.id IS NULL OR students.admin_verification_status = ?", "approved").
-		Order("users.created_at DESC").
-		Find(&users).Error
-	return users, err
+		Order("users.created_at DESC")
+	
+	// Get total count
+	err := query.Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	
+	// Apply pagination
+	offset := (page - 1) * pageSize
+	err = query.Offset(offset).Limit(pageSize).Find(&users).Error
+	return users, total, err
 }
 
 func (r *Repository) GetOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
@@ -244,10 +266,17 @@ func (r *Repository) UpdateDeviceTokensLastSentAt(tx *gorm.DB, tokens []string, 
 }
 
 func (r *Repository) RevokeDeviceTokens(tx *gorm.DB, tokens []string) error {
-	if len(tokens) == 0 {
-		return nil
-	}
 	return tx.Model(&migration.UserDeviceToken{}).
 		Where("token IN ?", tokens).
 		Updates(map[string]any{"revoked_at": true, "updated_at": time.Now()}).Error
+}
+
+// CountAdminsWithRole returns the count of users with the specified role
+func (r *Repository) CountAdminsWithRole(role string) (int64, error) {
+	var count int64
+	err := r.DB.Model(&migration.User{}).
+		Joins("JOIN roles ON roles.user_id = users.id").
+		Where("roles.code = ?", role).
+		Count(&count).Error
+	return count, err
 }

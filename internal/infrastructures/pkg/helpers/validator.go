@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
@@ -12,11 +13,21 @@ import (
 
 var validate *validator.Validate
 
+func init() {
+	validate = validator.New(validator.WithRequiredStructEnabled())
+	// Register custom validation for safehtml
+	_ = validate.RegisterValidation("safehtml", func(fl validator.FieldLevel) bool {
+		return IsSafeHTML(fl.Field().String())
+	})
+	// Register custom validation for strong password
+	_ = validate.RegisterValidation("strongpassword", func(fl validator.FieldLevel) bool {
+		return IsStrongPassword(fl.Field().String())
+	})
+}
+
 // ValidateStruct validates the struct using the validator package.
 // It returns an error if the validation fails, or nil if it succeeds.
 func ValidateStruct(payload any) error {
-	validate = validator.New(validator.WithRequiredStructEnabled())
-
 	err := validate.Struct(payload)
 	if err != nil {
 		return errs.BadRequest(err.Error())
@@ -96,4 +107,52 @@ func MatchNameWithEmail(name, email string) bool {
 	re := regexp.MustCompile(pattern)
 
 	return re.MatchString(localPart)
+}
+
+// IsSafeHTML returns true if the string doesn't contain potentially dangerous HTML/JS content
+// This helps prevent stored XSS attacks
+func IsSafeHTML(s string) bool {
+	// Check for common XSS patterns
+	dangerousPatterns := []string{
+		"<script",
+		"</script>",
+		"<img",
+		"<svg",
+		"onload=",
+		"onerror=",
+		"onclick=",
+		"javascript:",
+		"vbscript:",
+		"expression(",
+	}
+
+	sLower := strings.ToLower(s)
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(sLower, pattern) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsStrongPassword validates password strength: minimum 8 characters, at least one uppercase,
+// one lowercase, and one digit
+func IsStrongPassword(password string) bool {
+	if len(password) < 8 {
+		return false
+	}
+	
+	var hasUpper, hasLower, hasDigit bool
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsDigit(char):
+			hasDigit = true
+		}
+	}
+	
+	return hasUpper && hasLower && hasDigit
 }

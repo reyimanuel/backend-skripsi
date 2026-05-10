@@ -99,6 +99,36 @@ func pathToFileURL(p string) string {
 }
 
 func SaveUploadedFile(file *multipart.FileHeader, path string) error {
+	// Prevent path traversal by ensuring the path is within allowed directories
+	// We'll allow paths under "./public/" and "./tmp/" for safety
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	
+	// Define allowed base directories
+	allowedBaseDirs := []string{
+		filepath.Join(".", "public"),
+		filepath.Join(".", "tmp"),
+	}
+	
+	// Check if the absolute path is within any allowed base directory
+	isAllowed := false
+	for _, baseDir := range allowedBaseDirs {
+		absBaseDir, err := filepath.Abs(baseDir)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(absPath, absBaseDir) {
+			isAllowed = true
+			break
+		}
+	}
+	
+	if !isAllowed {
+		return fmt.Errorf("upload path not allowed: %s", path)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -123,7 +153,9 @@ func SaveUploadedFile(file *multipart.FileHeader, path string) error {
 }
 
 func GenerateUniqueFileName(originalName string) string {
-	ext := strings.ToLower(filepath.Ext(originalName))
+	// Extract only the base name to prevent path traversal
+	base := filepath.Base(originalName)
+	ext := strings.ToLower(filepath.Ext(base))
 	return fmt.Sprintf("%s%s", uuid.New().String(), ext)
 }
 

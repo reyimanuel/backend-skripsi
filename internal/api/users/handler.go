@@ -195,7 +195,25 @@ func (h *Handler) ResendVerificationEmail(ctx *gin.Context) {
 }
 
 func (h *Handler) GetPendingStudents(ctx *gin.Context) {
-	response, err := h.Service.GetPendingStudents()
+	var query GetUsersQuery
+	if err := ctx.ShouldBindQuery(&query); err != nil {
+		// Set default values if binding fails
+		query.Page = 1
+		query.PageSize = 20
+	}
+	
+	// Ensure reasonable bounds
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.PageSize < 1 {
+		query.PageSize = 20
+	}
+	if query.PageSize > 100 {
+		query.PageSize = 100
+	}
+
+	response, err := h.Service.GetPendingStudents(query.Page, query.PageSize)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -205,7 +223,25 @@ func (h *Handler) GetPendingStudents(ctx *gin.Context) {
 }
 
 func (h *Handler) GetAllUsers(ctx *gin.Context) {
-	response, err := h.Service.GetAllUsers()
+	var query GetUsersQuery
+	if err := ctx.ShouldBindQuery(&query); err != nil {
+		// Set default values if binding fails
+		query.Page = 1
+		query.PageSize = 20
+	}
+	
+	// Ensure reasonable bounds
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.PageSize < 1 {
+		query.PageSize = 20
+	}
+	if query.PageSize > 100 {
+		query.PageSize = 100
+	}
+
+	response, err := h.Service.GetAllUsers(query.Page, query.PageSize)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

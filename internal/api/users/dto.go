@@ -3,7 +3,7 @@ package user
 import "time"
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -18,11 +18,11 @@ type LogoutRequest struct {
 // RegisterStudentRequest is received as multipart/form-data.
 // kredensial (bukti gambar KTM/KRS) is handled separately via ctx.FormFile("kredensial").
 type RegisterStudentRequest struct {
-	Name         string `form:"name"          binding:"required"`
+	Name         string `form:"name"          binding:"required,safehtml"`
 	NIM          string `form:"nim"           binding:"required"`
 	Email        string `form:"email"         binding:"required,email"`
-	Password     string `form:"password"      binding:"required,min=6"`
-	ProgramStudi string `form:"program_studi" binding:"required"`
+	Password     string `form:"password"      binding:"required,strongpassword"`
+	ProgramStudi string `form:"program_studi" binding:"required,safehtml"`
 	Angkatan     int    `form:"angkatan"      binding:"required"`
 }
 
@@ -53,11 +53,16 @@ type PendingStudentResponse struct {
 	CreatedAt               time.Time  `json:"created_at"`
 }
 
+type PendingStudentListData struct {
+	Items []PendingStudentResponse `json:"items"`
+	Meta  PaginationMeta           `json:"meta"`
+}
+
 // RegisterWithKRSRequest is received as multipart/form-data.
 // The KRS image is handled separately via ctx.FormFile("krs").
 type RegisterWithKRSRequest struct {
 	Email    string `form:"email"    binding:"required,email"`
-	Password string `form:"password" binding:"required,min=6"`
+	Password string `form:"password" binding:"required,strongpassword"`
 }
 
 // KRSPreviewResponse is returned after a successful KRS-based registration
@@ -82,6 +87,23 @@ type UserListResponse struct {
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
 	RejectionReason         string     `json:"rejection_reason,omitempty"`
 	CreatedAt               time.Time  `json:"created_at"`
+}
+
+type UserListData struct {
+	Items []UserListResponse `json:"items"`
+	Meta  PaginationMeta     `json:"meta"`
+}
+
+type PaginationMeta struct {
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
+
+// GetUsersQuery represents query parameters for user list endpoints
+type GetUsersQuery struct {
+	Page     int    `form:"page" default:"1"`
+	PageSize int    `form:"page_size" default:"20"`
 }
 
 type RejectStudentRequest struct {

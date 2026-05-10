@@ -1,12 +1,14 @@
 package helpers
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/smtp"
 	"strings"
 
+	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/config"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 )
@@ -139,4 +141,24 @@ func SendVerificationEmail(userID uint, email string, name string) error {
 		return err
 	}
 	return nil
+}
+
+// SendVerificationEmailWithContext sends a verification email with context timeout
+func SendVerificationEmailWithContext(ctx context.Context, userID uint, email string, name string) error {
+	// Wrap the email sending in a timeout context
+	sendCtx, cancel := context.WithTimeout(ctx, constants.EmailTimeout)
+	defer cancel()
+	
+	// Use a channel to handle the asynchronous operation
+	resultChan := make(chan error, 1)
+	go func() {
+		resultChan <- SendVerificationEmail(userID, email, name)
+	}()
+	
+	select {
+	case <-sendCtx.Done():
+		return fmt.Errorf("email sending timed out after %v", constants.EmailTimeout)
+	case err := <-resultChan:
+		return err
+	}
 }

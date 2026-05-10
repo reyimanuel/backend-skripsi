@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
 	"gorm.io/gorm"
+	"time"
 )
 
 func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
@@ -11,13 +12,25 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	service := NewService(repo)
 	handler := NewHandler(service)
 
-	// Public routes
-	r.POST("/login", handler.Login)
-	r.POST("/refresh", handler.RefreshToken)
-	r.POST("/register", handler.RegisterStudent)
-	r.POST("/register/krs", handler.RegisterWithKRS)
-	r.POST("/verify-email", handler.VerifyEmail)
-	r.POST("/resend-verification", handler.ResendVerificationEmail)
+	// Public routes - login and refresh with strict rate limiting
+	publicAuth := r.Group("")
+	publicAuth.Use(middleware.IPBasedLimiter(5, 5, 1*time.Minute)) // 5 requests per minute for login attempts
+	{
+		publicAuth.POST("/login", handler.Login)
+		publicAuth.POST("/refresh", handler.RefreshToken)
+	}
+	
+	// Public routes - registration and verification with moderate rate limiting
+	publicReg := r.Group("")
+	publicReg.Use(middleware.IPBasedLimiter(20, 20, 1*time.Hour)) // 20 requests per hour for registration/verification
+	{
+		publicReg.POST("/register", handler.RegisterStudent)
+		publicReg.POST("/register/krs", handler.RegisterWithKRS)
+		publicReg.POST("/verify-email", handler.VerifyEmail)
+		publicReg.POST("/resend-verification", handler.ResendVerificationEmail)
+	}
+	
+	// Protected routes (require authentication)
 	r.POST("/logout", middleware.MiddlewareAuth, handler.Logout)
 	r.GET("/me", middleware.MiddlewareAuth, handler.GetMe)
 	r.PATCH("/me", middleware.MiddlewareAuth, handler.UpdateMyProfile)

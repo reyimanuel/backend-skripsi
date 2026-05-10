@@ -18,6 +18,7 @@ type AppConfigurationMap struct {
 	RefreshTokenLifeTime int64          // RefreshTokenLifeTime is the lifetime of the refresh token in seconds.
 	PrivateKeyPath       string         // Path to the private key file.
 	PublicKeyPath        string         // Path to the public key file.
+	JWTSecret            string         // JWTSecret is the secret key used for signing JWT tokens
 	BaseURL              string         // BaseURL is the base URL of the application, used for generating absolute URLs.
 	SMTP                 SMTPConfig     // SMTP configuration
 	SendGrid             SendGridConfig // SendGrid configuration
@@ -131,6 +132,14 @@ func Load() {
 		FrontEndURL = "http://localhost:3000"
 	}
 
+	JWTSecret := os.Getenv("JWT_SECRET")
+	if JWTSecret == "" {
+		log.Fatalf("JWT_SECRET environment variable is not set, check your .env file")
+	}
+	if len(JWTSecret) < 32 {
+		log.Fatalf("JWT_SECRET must be at least 32 characters long for security")
+	}
+
 	FirebaseCredentials := os.Getenv("FIREBASE_CREDENTIALS")
 	if FirebaseCredentials == "" {
 		log.Fatalf("FIREBASE_CREDENTIALS environment variable is not set, check your .env file")
@@ -145,6 +154,7 @@ func Load() {
 		RefreshTokenLifeTime: int64(RefreshTokenLifeTime),
 		PrivateKeyPath:       PrivateKeyPath,
 		PublicKeyPath:        PublicKeyPath,
+		JWTSecret:            JWTSecret,
 		BaseURL:              BaseURL,
 		SMTP:                 SMTP,
 		SendGrid:             SendGrid,

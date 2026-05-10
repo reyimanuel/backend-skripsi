@@ -179,20 +179,27 @@ func (s *Service) UploadTemplateV2(adminID uint, req UploadTemplateV2Request, fi
 			oldPath = existing.FilePath
 		}
 
-		return s.Repo.UpsertTemplate(tx, &migration.LetterTemplate{
+		if err := s.Repo.UpsertTemplate(tx, &migration.LetterTemplate{
 			LetterTypeID: resolvedLetterTypeID,
 			FilePath:     newPath,
 			FileType:     "docx",
 			Placeholders: datatypes.JSON(placeholdersJSON),
 			CreatedBy:    adminID,
-		})
+		}); err != nil {
+			return err
+		}
+
+		// Remove old file inside the transaction to prevent race conditions
+		if oldPath != "" {
+			helpers.RemoveOldFile(oldPath, newPath)
+		}
+
+		return nil
 	})
 	if err != nil {
 		_ = os.Remove(newPath)
 		return nil, err
 	}
-
-	helpers.RemoveOldFile(oldPath, newPath)
 
 	// Ensure slices aren't nil in JSON.
 	if analysis.Placeholders == nil {

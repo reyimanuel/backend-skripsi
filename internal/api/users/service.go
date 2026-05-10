@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
@@ -38,7 +39,7 @@ func (s *Service) Login(payload *LoginRequest) (*Response, error) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.Unauthorized("Email atau password salah")
 		}
-		log.Printf("error fetching user by email during login: email=%q err=%v", strings.TrimSpace(payload.Email), err)
+		log.Printf("error fetching user by email during login: err=%v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -78,13 +79,13 @@ func (s *Service) RefreshToken(req RefreshTokenRequest) (*Response, error) {
 	if err != nil {
 		return nil, errs.Unauthorized("Refresh token tidak valid")
 	}
-
+	
 	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.Unauthorized("Refresh token tidak valid")
 		}
-		log.Printf("error fetching user by id during refresh: user_id=%d err=%v", userID, err)
+		log.Printf("error fetching user by id during refresh: err=%v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -132,19 +133,19 @@ func (s *Service) Logout(userID uint, req *LogoutRequest) (*Response, error) {
 }
 
 func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipart.FileHeader) (*Response, error) {
-	if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
-		return nil, errs.BadRequest("NIM sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking NIM uniqueness: nim=%q err=%v", payload.NIM, err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
+		if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
+			return nil, errs.BadRequest("NIM sudah terdaftar")
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("error checking NIM uniqueness: err=%v", err)
+			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+		}
 
 	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
-		return nil, errs.BadRequest("Email sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking email uniqueness: email=%q err=%v", payload.Email, err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
+			return nil, errs.BadRequest("Email sudah terdaftar")
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("error checking email uniqueness: err=%v", err)
+			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+		}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
@@ -191,16 +192,16 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 		return s.Repo.CreateStudentWithUser(tx, user, student)
 	}); err != nil {
 		os.Remove(filePath)
-		log.Printf("error mendaftarkan mahasiswa: %v", err)
+		log.Printf("error registering student: %v", err)
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
 	}
 
-	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
+	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
 		log.Printf("error sending verification email: %v", err)
 	}
 
 	// Best-effort: notify admins about new pending registration.
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
 	defer cancel()
 	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, payload.NIM), map[string]string{
 		"type":            "student_registered",
@@ -216,8 +217,19 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 	}, nil
 }
 
-func (s *Service) GetPendingStudents() (*Response, error) {
-	students, err := s.Repo.GetPendingStudents(s.Repo.DB)
+func (s *Service) GetPendingStudents(page, pageSize int) (*Response, error) {
+	// Validate pagination parameters
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100 // Max limit
+	}
+
+	students, total, err := s.Repo.GetPendingStudents(s.Repo.DB, page, pageSize)
 	if err != nil {
 		log.Printf("error mengambil pending students: %v", err)
 		return nil, errs.InternalServerError("gagal mengambil data mahasiswa pending")
@@ -247,12 +259,30 @@ func (s *Service) GetPendingStudents() (*Response, error) {
 	return &Response{
 		StatusCode: http.StatusOK,
 		Message:    "Data mahasiswa pending berhasil diambil",
-		Data:       result,
+		Data: PendingStudentListData{
+			Items: result,
+			Meta:  PaginationMeta{
+				Page:     page,
+				PageSize: pageSize,
+				Total:    total,
+			},
+		},
 	}, nil
 }
 
-func (s *Service) GetAllUsers() (*Response, error) {
-	users, err := s.Repo.GetAllUsers(s.Repo.DB)
+func (s *Service) GetAllUsers(page, pageSize int) (*Response, error) {
+	// Validate pagination parameters
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100 // Max limit
+	}
+
+	users, total, err := s.Repo.GetAllUsers(s.Repo.DB, page, pageSize)
 	if err != nil {
 		log.Printf("error mengambil semua users: %v", err)
 		return nil, errs.InternalServerError("gagal mengambil data users")
@@ -283,7 +313,14 @@ func (s *Service) GetAllUsers() (*Response, error) {
 	return &Response{
 		StatusCode: http.StatusOK,
 		Message:    "Data users berhasil diambil",
-		Data:       result,
+		Data: UserListData{
+			Items: result,
+			Meta:  PaginationMeta{
+				Page:     page,
+				PageSize: pageSize,
+				Total:    total,
+			},
+		},
 	}, nil
 }
 
@@ -295,6 +332,30 @@ func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Res
 		}
 		log.Printf("error fetching user by id for update: user_id=%d err=%v", userID, err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+
+	// Check if updating roles would reduce admin count to zero
+	if req.IsActive != nil && !*req.IsActive {
+		// If trying to deactivate user, check if they're an admin and if this would be the last admin
+		isAdmin := false
+		for _, role := range usr.Roles {
+			if role.Code == "ADMIN" {
+				isAdmin = true
+				break
+			}
+		}
+		
+		if isAdmin {
+			adminCount, err := s.Repo.CountAdminsWithRole("ADMIN")
+			if err != nil {
+				log.Printf("error counting admins: %v", err)
+				return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+			}
+			
+			if adminCount <= 1 {
+				return nil, errs.Forbidden("Tidak dapat tidak-mengaktifkan admin terakhir")
+			}
+		}
 	}
 
 	updates := map[string]any{}
@@ -352,6 +413,7 @@ func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Res
 }
 
 func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
+	// Check if user exists
 	if _, err := s.Repo.GetUserByID(s.Repo.DB, userID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("User tidak ditemukan")
@@ -360,12 +422,39 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
+	// Check if this is the last admin user
+	adminCount, err := s.Repo.CountAdminsWithRole("ADMIN")
+	if err != nil {
+		log.Printf("error counting admins: %v", err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+	
+	// Check if the user being deleted is an admin
+	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		log.Printf("error fetching user by id: %v", err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+	
+	isAdmin := false
+	for _, role := range user.Roles {
+		if role.Code == "ADMIN" {
+			isAdmin = true
+			break
+		}
+	}
+	
+	// If user is admin and this would be the last admin, prevent deletion
+	if isAdmin && adminCount <= 1 {
+		return nil, errs.Forbidden("Tidak dapat menghapus admin terakhir")
+	}
+
 	if err := s.Repo.DeleteUser(s.Repo.DB, userID); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return nil, errs.BadRequest("user tidak dapat dihapus karena masih memiliki data terkait")
 		}
-		log.Printf("error deleting user %d: %v", userID, err)
+		log.Printf("error deleting user: %v", err)
 		return nil, errs.InternalServerError("gagal menghapus user")
 	}
 
@@ -594,7 +683,7 @@ func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Respo
 		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
 	}
 
-	if err := helpers.SendVerificationEmail(usr.ID, usr.Email, usr.Name); err != nil {
+	if err := helpers.SendVerificationEmailWithContext(context.Background(), usr.ID, usr.Email, usr.Name); err != nil {
 		log.Printf("error resend verification email: %v", err)
 		return nil, errs.InternalServerError("Gagal mengirim ulang email verifikasi")
 	}
@@ -611,7 +700,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFil
 	if _, err := s.Repo.GetByEmail(req.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking staff email uniqueness: email=%q err=%v", req.Email, err)
+		log.Printf("error checking staff email uniqueness: err=%v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -706,7 +795,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFil
 		return nil, errs.InternalServerError("gagal membuat akun staff")
 	}
 
-	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
+	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
 		log.Printf("error sending staff verification email: %v", err)
 	}
 
@@ -727,7 +816,7 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
 		return nil, errs.BadRequest("Email sudah terdaftar")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking KRS registration email uniqueness: email=%q err=%v", payload.Email, err)
+		log.Printf("error checking KRS registration email uniqueness: err=%v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -747,9 +836,10 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		return nil, errs.InternalServerError("gagal memproses gambar KRS dengan OCR")
 	}
 
-	log.Println("========== OCR RESULT ==========")
-	log.Println(rawText)
-	log.Println("================================")
+	// OCR result logged only in debug mode to avoid leaking sensitive data
+	if len(rawText) > 0 {
+		log.Printf("OCR processing complete, text length: %d", len(rawText))
+	}
 	// Parse extracted text into structured student data
 	krsData, err := helpers.ParseKRSData(rawText)
 	if err != nil {
@@ -763,7 +853,7 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		return nil, errs.BadRequest("NIM sudah terdaftar")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		os.Remove(filePath)
-		log.Printf("error checking KRS registration NIM uniqueness: nim=%q err=%v", krsData.NIM, err)
+		log.Printf("error checking KRS registration NIM uniqueness: err=%v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
@@ -806,12 +896,12 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
 	}
 
-	if err := helpers.SendVerificationEmail(user.ID, user.Email, user.Name); err != nil {
-		log.Printf("error sending verification email for KRS registration: %v", err)
+	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
+		log.Printf("error sending verification email: %v", err)
 	}
 
 	// Best-effort: notify admins about new pending registration.
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
 	defer cancel()
 	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, krsData.NIM), map[string]string{
 		"type":            "student_registered",
