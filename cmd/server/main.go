@@ -1,8 +1,8 @@
 package main
 
-// @title           E-Voting 2025 API
+// @title          	Sitara 2026 API
 // @version         1.0.0
-// @description     REST API untuk sistem E-Voting 2025 UNSRAT IT Community.
+// @description     REST API untuk sistem tata kelola surat.
 // @BasePath        /
 // @schemes         http
 // @securityDefinitions.apikey  BearerAuth
