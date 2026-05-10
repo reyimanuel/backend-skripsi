@@ -128,20 +128,18 @@ func baseUserQuery(tx *gorm.DB) *gorm.DB {
 func (r *Repository) GetPendingStudents(tx *gorm.DB, page, pageSize int) ([]migration.Student, int64, error) {
 	var students []migration.Student
 	var total int64
-	
-	query := tx.Preload("User").
-		Where("admin_verification_status = ?", "pending").
-		Order("created_at DESC")
-	
-	// Get total count
-	err := query.Count(&total).Error
-	if err != nil {
+
+	query := tx.Model(&migration.Student{}).Where("admin_verification_status = ?", "pending")
+
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	
-	// Apply pagination
-	offset := (page - 1) * pageSize
-	err = query.Offset(offset).Limit(pageSize).Find(&students).Error
+
+	err := query.Preload("User").
+		Order("created_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&students).Error
 	return students, total, err
 }
 
@@ -185,21 +183,20 @@ func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
 func (r *Repository) GetAllUsers(tx *gorm.DB, page, pageSize int) ([]migration.User, int64, error) {
 	var users []migration.User
 	var total int64
-	
+
 	query := baseUserQuery(tx).
 		Joins("LEFT JOIN students ON students.user_id = users.id").
-		Where("students.id IS NULL OR students.admin_verification_status = ?", "approved").
-		Order("users.created_at DESC")
-	
-	// Get total count
-	err := query.Count(&total).Error
-	if err != nil {
+		Where("students.id IS NULL OR students.admin_verification_status = ?", "approved")
+
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	
-	// Apply pagination
-	offset := (page - 1) * pageSize
-	err = query.Offset(offset).Limit(pageSize).Find(&users).Error
+
+	err := query.
+		Order("users.created_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&users).Error
 	return users, total, err
 }
 

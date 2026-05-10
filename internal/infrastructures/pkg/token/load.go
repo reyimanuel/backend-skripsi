@@ -22,7 +22,6 @@ type jwtStruct struct {
 	jwtRefreshLifeTime int64
 	privateKey         *rsa.PrivateKey
 	publicKey          *rsa.PublicKey
-	secret             []byte
 }
 
 func ValidateKeyPath(path string) (string, error) {
@@ -76,6 +75,5 @@ func Load() {
 		jwtRefreshLifeTime: cfg.RefreshTokenLifeTime,
 		publicKey:          publicKey,
 		privateKey:         privateKey,
-		secret:             []byte(cfg.JWTSecret),
 	}
 }
