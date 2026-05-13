@@ -14,7 +14,9 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	// v2: upload + analyze placeholders
 	r.POST("/templates/upload", middleware.MiddlewareRole("ADMIN"), handler.UploadTemplateV2)
 
+	r.PUT("/lettertype/:id", middleware.MiddlewareRole("ADMIN"), handler.UpdateLetterType)
 	r.DELETE("/template/:id", middleware.MiddlewareRole("ADMIN"), handler.DeleteTemplate)
+	r.GET("/lettertypes", handler.GetAllLetterTypes)
 	r.GET("/templates", handler.GetAllTemplates)
 	r.GET("/preview/:id", handler.PreviewTemplate)
 

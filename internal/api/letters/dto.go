@@ -17,6 +17,19 @@ type UpdateAttachmentRequirementsRequest struct {
 	Requirements []AttachmentRequirement `json:"requirements" binding:"required"`
 }
 
+type UpdateLetterTypeRequest struct {
+	Code        string `json:"code"`
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+}
+
+type LetterTypeResponse struct {
+	ID          uint   `json:"id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type LetterTypeRequirementsResponse struct {
 	LetterTypeID uint                    `json:"letter_type_id"`
 	Code         string                  `json:"code"`
@@ -39,8 +52,9 @@ type UploadTemplateRequest struct {
 // UploadTemplateV2Request is received as multipart/form-data.
 //
 // Use cases:
-// - Replace template for an existing letter type: provide letter_type_id.
-// - Create a new letter type and upload its template: omit letter_type_id and provide code + name (+ optional description).
+//   - Create a new letter type and upload its template: omit letter_type_id and provide code + name (+ optional description).
+//   - Replace/update template for an existing letter type: provide letter_type_id.
+//     Optional: provide name and/or description to also update the letter type metadata.
 //
 // File is handled separately via ctx.FormFile("file").
 type UploadTemplateV2Request struct {

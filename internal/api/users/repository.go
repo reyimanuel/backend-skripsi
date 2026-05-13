@@ -177,7 +177,29 @@ func (r *Repository) UpdateUserFields(tx *gorm.DB, userID uint, updates map[stri
 }
 
 func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
-	return tx.Delete(&migration.User{}, userID).Error
+	return tx.Transaction(func(txTx *gorm.DB) error {
+		// Clean up internal associations
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.UserRole{}).Error; err != nil {
+			return err
+		}
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.UserDeviceToken{}).Error; err != nil {
+			return err
+		}
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.UserNotification{}).Error; err != nil {
+			return err
+		}
+
+		// Try deleting Official and Student profiles.
+		// If these have related data (like Letters), it will fail with 23503, which is expected.
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.Official{}).Error; err != nil {
+			return err
+		}
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.Student{}).Error; err != nil {
+			return err
+		}
+
+		return txTx.Delete(&migration.User{}, userID).Error
+	})
 }
 
 func (r *Repository) GetAllUsers(tx *gorm.DB, page, pageSize int) ([]migration.User, int64, error) {
@@ -272,7 +294,8 @@ func (r *Repository) RevokeDeviceTokens(tx *gorm.DB, tokens []string) error {
 func (r *Repository) CountAdminsWithRole(role string) (int64, error) {
 	var count int64
 	err := r.DB.Model(&migration.User{}).
-		Joins("JOIN roles ON roles.user_id = users.id").
+		Joins("JOIN user_roles ON user_roles.user_id = users.id").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.code = ?", role).
 		Count(&count).Error
 	return count, err

@@ -7,11 +7,22 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 )
 
 var validate *validator.Validate
+
+type ginValidator struct{}
+
+func (ginValidator) ValidateStruct(payload any) error {
+	return validate.Struct(payload)
+}
+
+func (ginValidator) Engine() any {
+	return validate
+}
 
 func init() {
 	validate = validator.New(validator.WithRequiredStructEnabled())
@@ -23,6 +34,7 @@ func init() {
 	_ = validate.RegisterValidation("strongpassword", func(fl validator.FieldLevel) bool {
 		return IsStrongPassword(fl.Field().String())
 	})
+	binding.Validator = ginValidator{}
 }
 
 // ValidateStruct validates the struct using the validator package.
@@ -141,7 +153,7 @@ func IsStrongPassword(password string) bool {
 	if len(password) < 8 {
 		return false
 	}
-	
+
 	var hasUpper, hasLower, hasDigit bool
 	for _, char := range password {
 		switch {
@@ -153,6 +165,6 @@ func IsStrongPassword(password string) bool {
 			hasDigit = true
 		}
 	}
-	
+
 	return hasUpper && hasLower && hasDigit
 }

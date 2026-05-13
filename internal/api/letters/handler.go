@@ -95,8 +95,41 @@ func (h *Handler) DeleteTemplate(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) UpdateLetterType(ctx *gin.Context) {
+	idParam := ctx.Param("id")
+	letterTypeID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("id tidak valid"))
+		return
+	}
+
+	var req UpdateLetterTypeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data jenis surat tidak valid"))
+		return
+	}
+
+	response, err := h.Service.UpdateLetterType(uint(letterTypeID), req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) GetAllTemplates(ctx *gin.Context) {
 	response, err := h.Service.GetAllTemplates()
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) GetAllLetterTypes(ctx *gin.Context) {
+	response, err := h.Service.GetAllLetterTypes()
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

@@ -90,6 +90,41 @@ func (s *Service) UpdateAttachmentRequirements(letterTypeID uint, req UpdateAtta
 	return &Response{StatusCode: http.StatusOK, Message: "Requirements berhasil diupdate"}, nil
 }
 
+func (s *Service) UpdateLetterType(letterTypeID uint, req UpdateLetterTypeRequest) (*Response, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, errs.BadRequest("name wajib diisi")
+	}
+
+	code := strings.TrimSpace(req.Code)
+	if code != "" {
+		code = strings.ToUpper(strings.ReplaceAll(code, " ", "_"))
+	}
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		lt, err := s.Repo.GetLetterTypeByID(tx, letterTypeID)
+		if err != nil {
+			return errs.NotFound("Jenis surat tidak ditemukan")
+		}
+
+		// Jika code berubah, validasi tidak duplikat
+		if code != "" && code != lt.Code {
+			existing, _ := s.Repo.GetLetterTypeByCode(tx, code)
+			if existing != nil {
+				return errs.BadRequest("kode tipe surat sudah terdaftar")
+			}
+		}
+
+		desc := strings.TrimSpace(req.Description)
+		return s.Repo.UpdateLetterType(tx, letterTypeID, code, name, desc)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Jenis surat berhasil diupdate"}, nil
+}
+
 // UploadTemplateV2 uploads a .docx template, detects {{placeholders}} inside the DOCX,
 // persists them, and returns the required payload keys to help clients build forms.
 func (s *Service) UploadTemplateV2(adminID uint, req UploadTemplateV2Request, file *multipart.FileHeader) (*Response, error) {
@@ -153,6 +188,27 @@ func (s *Service) UploadTemplateV2(adminID uint, req UploadTemplateV2Request, fi
 				return errs.NotFound("Jenis surat tidak ditemukan")
 			}
 			resolvedLetterType = *lt
+
+			// Update metadata jika dikirim
+			name := strings.TrimSpace(req.Name)
+			desc := strings.TrimSpace(req.Description)
+			if name != "" || desc != "" {
+				// Jika hanya name atau description yang berubah, gunakan yang lama untuk yang tidak dikirim
+				updateName := name
+				if updateName == "" {
+					updateName = lt.Name
+				}
+				updateDesc := desc
+				if updateDesc == "" {
+					updateDesc = lt.Description
+				}
+				if err := s.Repo.UpdateLetterType(tx, resolvedLetterTypeID, "", updateName, updateDesc); err != nil {
+					return err
+				}
+				// Update resolvedLetterType untuk response
+				resolvedLetterType.Name = updateName
+				resolvedLetterType.Description = updateDesc
+			}
 		} else {
 			code := strings.TrimSpace(req.Code)
 			name := strings.TrimSpace(req.Name)
@@ -336,4 +392,32 @@ func (s *Service) GetAllTemplates() (*Response, error) {
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Berhasil mengambil data template", Data: items}, nil
+}
+
+func (s *Service) GetAllLetterTypes() (*Response, error) {
+	var items []LetterTypeResponse
+
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		letterTypes, err := s.Repo.ListLetterTypes(tx)
+		if err != nil {
+			return err
+		}
+
+		items = make([]LetterTypeResponse, 0, len(letterTypes))
+		for _, lt := range letterTypes {
+			items = append(items, LetterTypeResponse{
+				ID:          lt.ID,
+				Code:        lt.Code,
+				Name:        lt.Name,
+				Description: lt.Description,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Berhasil mengambil data jenis surat", Data: items}, nil
 }

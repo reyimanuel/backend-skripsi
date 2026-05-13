@@ -68,6 +68,19 @@ func (r *Repository) UpdateLetterTypeAttachmentRequirements(tx *gorm.DB, letterT
 		Update("attachment_requirements", reqs).Error
 }
 
+func (r *Repository) UpdateLetterType(tx *gorm.DB, id uint, code, name, description string) error {
+	updates := map[string]interface{}{
+		"name":        name,
+		"description": description,
+	}
+	if code != "" {
+		updates["code"] = code
+	}
+	return tx.Model(&migration.LetterType{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
 func (r *Repository) GetLetterByID(tx *gorm.DB, letterID uint) (*migration.Letter, error) {
 	var letter migration.Letter
 	if err := tx.Where("id = ?", letterID).First(&letter).Error; err != nil {
@@ -106,4 +119,10 @@ func (r *Repository) ListTemplates(tx *gorm.DB) ([]migration.LetterTemplate, err
 	var templates []migration.LetterTemplate
 	err := tx.Preload("LetterType").Order("updated_at desc").Find(&templates).Error
 	return templates, err
+}
+
+func (r *Repository) ListLetterTypes(tx *gorm.DB) ([]migration.LetterType, error) {
+	var letterTypes []migration.LetterType
+	err := tx.Order("name asc").Find(&letterTypes).Error
+	return letterTypes, err
 }
