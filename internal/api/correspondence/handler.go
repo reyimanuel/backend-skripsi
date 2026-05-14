@@ -121,7 +121,7 @@ func (h *Handler) ListForwardedLetters(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) ApproveLetter(ctx *gin.Context) {
+func (h *Handler) ReviewLetter(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
 		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
@@ -141,7 +141,7 @@ func (h *Handler) ApproveLetter(ctx *gin.Context) {
 		return
 	}
 
-	response, err := h.Service.ApproveLetter(uint(letterID), userID, req)
+	response, err := h.Service.ReviewLetter(uint(letterID), userID, req)
 
 	if err != nil {
 		errs.HandlerError(ctx, err)

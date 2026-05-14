@@ -21,6 +21,6 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	r.DELETE("/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.DeleteLetter)
 	r.GET("/preview/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.PreviewLetter)
 	r.GET("/history/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.GetHistoryAndDetail)
-	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.ApproveLetter)
+	r.PATCH("/approve/:id", middleware.MiddlewareRole("ADMIN", "DEKAN", "WAKIL_DEKAN"), handler.ReviewLetter)
 	r.POST("/attachments/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.UploadAttachments)
 }

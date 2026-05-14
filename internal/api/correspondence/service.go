@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/api/letters"
+	user "github.com/reyimanuel/letter-administration/internal/api/users"
 	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
-	user "github.com/reyimanuel/letter-administration/internal/api/users"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -708,7 +708,7 @@ func parseRequiredAttachmentKeys(raw datatypes.JSON) ([]string, error) {
 	return out, nil
 }
 
-func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
+func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
 	historyAction := historyApproved
 	message := "Surat berhasil disetujui"
 	switch req.Action {
@@ -949,15 +949,15 @@ func (s *Service) ApproveLetter(letterID uint, userID uint, req ApproveLetterReq
 			nType = "letter_forwarded"
 		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
-	defer cancel()
-	if _, err := push.SendToUser(ctx, s.Repo.DB, studentUserID, title, body, map[string]string{
-		"type":      nType,
-		"letter_id": fmt.Sprint(letterID),
-		"status":    resultingStatus,
-	}); err != nil {
-		log.Printf("push student notify failed: letter_id=%d student_user_id=%d err=%v", letterID, studentUserID, err)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
+		defer cancel()
+		if _, err := push.SendToUser(ctx, s.Repo.DB, studentUserID, title, body, map[string]string{
+			"type":      nType,
+			"letter_id": fmt.Sprint(letterID),
+			"status":    resultingStatus,
+		}); err != nil {
+			log.Printf("push student notify failed: letter_id=%d student_user_id=%d err=%v", letterID, studentUserID, err)
+		}
 	}
 
 	return &Response{
