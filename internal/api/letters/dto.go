@@ -73,6 +73,7 @@ type TemplateListItem struct {
 	FilePath            string    `json:"file_path"`
 	FileType            string    `json:"file_type"`
 	CreatedBy           uint      `json:"created_by"`
+	CreatorName         string    `json:"creator_name"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 	RequiredPayloadKeys []string  `json:"required_payload_keys"`

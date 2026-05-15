@@ -381,6 +381,7 @@ func (s *Service) GetAllTemplates() (*Response, error) {
 				FileType:            t.FileType,
 				RequiredPayloadKeys: analysis.RequiredPayloadKeys,
 				CreatedBy:           t.CreatedBy,
+				CreatorName:         t.Creator.Name,
 				CreatedAt:           t.CreatedAt,
 				UpdatedAt:           t.UpdatedAt,
 			})

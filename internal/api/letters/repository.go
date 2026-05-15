@@ -117,7 +117,7 @@ func (r *Repository) DeleteTemplateByLetterTypeID(tx *gorm.DB, letterTypeID uint
 
 func (r *Repository) ListTemplates(tx *gorm.DB) ([]migration.LetterTemplate, error) {
 	var templates []migration.LetterTemplate
-	err := tx.Preload("LetterType").Order("updated_at desc").Find(&templates).Error
+	err := tx.Preload("LetterType").Preload("Creator").Order("updated_at desc").Find(&templates).Error
 	return templates, err
 }
 

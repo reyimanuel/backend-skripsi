@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"net/url"
 	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/constants"
@@ -130,9 +131,18 @@ func SendVerificationEmail(userID uint, email string, name string) error {
 		return err
 	}
 
+	cfg := config.Get()
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+
+	frontendBaseURL := strings.TrimRight(strings.TrimSpace(cfg.FrontEndURL), "/")
+	verifyURL := frontendBaseURL + "/register/verify-email?token=" + url.QueryEscape(verifyToken) + "&email=" + url.QueryEscape(email)
+
 	body := fmt.Sprintf(
-		"Halo %s,\n\nGunakan token berikut untuk verifikasi email akun Anda:\n\n%s\n\nJika Anda tidak merasa mendaftar, abaikan email ini.",
+		"Halo %s,\n\nKlik tautan berikut untuk memverifikasi email akun Anda:\n\n%s\n\nJika tautan tidak bisa dibuka, gunakan token berikut secara manual:\n\n%s\n\nJika Anda tidak merasa mendaftar, abaikan email ini.",
 		name,
+		verifyURL,
 		verifyToken,
 	)
 
