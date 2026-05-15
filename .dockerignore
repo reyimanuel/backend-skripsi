@@ -1,5 +1,9 @@
 .git/
 .gitignore
+.air.toml
+README.md
+docs/
+letter-admin.exe
 
 # Local env / secrets
 .env
@@ -9,6 +13,7 @@ keys/
 # Local tooling
 tmp/
 **/*.log
+*.exe
 
 # Runtime-generated / uploads
 public/generated/

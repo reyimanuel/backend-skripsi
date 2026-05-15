@@ -12,6 +12,10 @@ import (
 )
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	api := r.Group("/api")
 
 	user.RegisterRoutes(api.Group("/users"), db)
