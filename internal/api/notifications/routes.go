@@ -11,6 +11,7 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.GET("/recent", handler.GetRecent)
+	r.GET("/status", handler.GetStatus)
 	r.PATCH("/:id/read", handler.MarkRead)
 	r.POST("/test", handler.SendTest)
 }

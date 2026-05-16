@@ -69,6 +69,22 @@ func (h *Handler) GetRecent(ctx *gin.Context) {
 	ctx.JSON(resp.StatusCode, resp)
 }
 
+func (h *Handler) GetStatus(ctx *gin.Context) {
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	resp, err := h.Service.GetStatus(userID)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(resp.StatusCode, resp)
+}
+
 func (h *Handler) MarkRead(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {

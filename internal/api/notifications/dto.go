@@ -15,6 +15,11 @@ type SendResult struct {
 	Revoked int `json:"revoked"`
 }
 
+type StatusData struct {
+	ActiveTokens int  `json:"active_tokens"`
+	FCMReady     bool `json:"fcm_ready"`
+}
+
 type Response struct {
 	StatusCode int    `json:"status_code"`
 	Message    string `json:"message"`

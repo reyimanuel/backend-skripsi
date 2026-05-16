@@ -25,6 +25,10 @@ type SendResult struct {
 	Revoked int
 }
 
+func IsReady() bool {
+	return fcm.Client() != nil
+}
+
 // SendToUser sends a notification to all active tokens of a user.
 // Best practice: call this outside of your business transaction.
 func SendToUser(ctx context.Context, db *gorm.DB, userID uint, title string, body string, data map[string]string) (*SendResult, error) {

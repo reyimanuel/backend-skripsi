@@ -99,6 +99,27 @@ func (s *Service) ListRecent(userID uint, days int) (*Response, error) {
 	}, nil
 }
 
+func (s *Service) GetStatus(userID uint) (*Response, error) {
+	var activeTokens int64
+	if err := s.Repo.DB.Model(&migration.UserDeviceToken{}).
+		Where("user_id = ?", userID).
+		Where("revoked_at = ?", false).
+		Where("token <> ''").
+		Count(&activeTokens).Error; err != nil {
+		log.Printf("notification status failed: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Gagal mengambil status notifikasi")
+	}
+
+	return &Response{
+		StatusCode: http.StatusOK,
+		Message:    "OK",
+		Data: StatusData{
+			ActiveTokens: int(activeTokens),
+			FCMReady:     push.IsReady(),
+		},
+	}, nil
+}
+
 func (s *Service) MarkRead(userID uint, notificationID uint) (*Response, error) {
 	now := time.Now()
 
