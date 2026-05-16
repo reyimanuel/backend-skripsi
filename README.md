@@ -223,6 +223,8 @@ At draft creation/update and submission time, required keys are validated. The s
 ## API Documentation
 
 - OpenAPI spec: [docs/openapi.yaml](docs/openapi.yaml)
+- Alur pengajuan surat mahasiswa sampai dekan: [docs/alur-pengajuan-surat.md](docs/alur-pengajuan-surat.md)
+- Manual penggunaan backend + frontend: [docs/manual-penggunaan-project.md](docs/manual-penggunaan-project.md)
 - Base path: `/api`
 
 Notes:

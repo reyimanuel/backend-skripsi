@@ -37,4 +37,7 @@ public/images/signatures/*
 !public/images/signatures/signatures.png
 public/images/student-cards/*
 
-docs
+# Keep legacy docs ignored, but allow the project manuals to be versioned.
+docs/*
+!docs/alur-pengajuan-surat.md
+!docs/manual-penggunaan-project.md
