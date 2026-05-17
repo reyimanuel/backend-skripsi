@@ -49,17 +49,3 @@ func GenerateResetPasswordToken(userID uint, email string) (string, error) {
 
 	return token.SignedString(jwtConfig.privateKey)
 }
-
-func GenerateEmailVerificationToken(userID uint, email string) (string, error) {
-	token := jwt.New(jwt.SigningMethodRS256)
-
-	claims := token.Claims.(jwt.MapClaims)
-	claims["sub"] = userID
-	claims["email"] = email
-	claims["purpose"] = "email_verification"
-	claims["iss"] = "myApp"
-	claims["iat"] = time.Now().Unix()
-	claims["exp"] = time.Now().Add(24 * time.Hour).Unix()
-
-	return token.SignedString(jwtConfig.privateKey)
-}

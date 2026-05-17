@@ -165,7 +165,7 @@ func (h *Handler) DeleteFCMToken(ctx *gin.Context) {
 func (h *Handler) VerifyEmail(ctx *gin.Context) {
 	var req VerifyEmailRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("Token verifikasi tidak valid"))
+		errs.HandlerError(ctx, errs.BadRequest("Email dan kode verifikasi 5 digit wajib diisi dengan benar"))
 		return
 	}
 
@@ -201,7 +201,7 @@ func (h *Handler) GetPendingStudents(ctx *gin.Context) {
 		query.Page = 1
 		query.PageSize = 20
 	}
-	
+
 	// Ensure reasonable bounds
 	if query.Page < 1 {
 		query.Page = 1
@@ -229,7 +229,7 @@ func (h *Handler) GetAllUsers(ctx *gin.Context) {
 		query.Page = 1
 		query.PageSize = 20
 	}
-	
+
 	// Ensure reasonable bounds
 	if query.Page < 1 {
 		query.Page = 1

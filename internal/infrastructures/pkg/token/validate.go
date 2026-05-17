@@ -67,25 +67,3 @@ func ValidateResetPasswordToken(tokenStr string) (uint, error) {
 	claims := tkn.Claims.(jwt.MapClaims)
 	return uint(claims["sub"].(float64)), nil
 }
-
-func ValidateEmailVerificationToken(tokenStr string) (uint, string, error) {
-	tkn, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-		return jwtConfig.publicKey, nil
-	})
-	if err != nil || !tkn.Valid {
-		return 0, "", errors.New("invalid verification token")
-	}
-
-	claims := tkn.Claims.(jwt.MapClaims)
-	purpose, ok := claims["purpose"].(string)
-	if !ok || purpose != "email_verification" {
-		return 0, "", errors.New("invalid verification token purpose")
-	}
-
-	email, ok := claims["email"].(string)
-	if !ok {
-		return 0, "", errors.New("invalid verification token")
-	}
-
-	return uint(claims["sub"].(float64)), email, nil
-}

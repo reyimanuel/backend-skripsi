@@ -2,16 +2,16 @@ package helpers
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"math/big"
 	"net"
 	"net/smtp"
-	"net/url"
 	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/config"
-	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 )
 
 func SendEmail(toEmail string, subject string, plainTextBody string) error {
@@ -125,28 +125,22 @@ func dialSMTPClient(host string, port string) (*smtp.Client, bool, error) {
 	return client, isTLS, nil
 }
 
-func SendVerificationEmail(userID uint, email string, name string) error {
-	verifyToken, err := token.GenerateEmailVerificationToken(userID, email)
+func GenerateEmailVerificationCode() (string, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(100000))
 	if err != nil {
-		return err
+		return "", err
 	}
+	return fmt.Sprintf("%05d", value.Int64()), nil
+}
 
-	cfg := config.Get()
-	if cfg == nil {
-		return fmt.Errorf("config not loaded")
-	}
-
-	frontendBaseURL := strings.TrimRight(strings.TrimSpace(cfg.FrontEndURL), "/")
-	verifyURL := frontendBaseURL + "/register/verify-email?token=" + url.QueryEscape(verifyToken) + "&email=" + url.QueryEscape(email)
-
+func SendVerificationEmail(email string, name string, code string) error {
 	body := fmt.Sprintf(
-		"Halo %s,\n\nKlik tautan berikut untuk memverifikasi email akun Anda:\n\n%s\n\nJika tautan tidak bisa dibuka, gunakan token berikut secara manual:\n\n%s\n\nJika Anda tidak merasa mendaftar, abaikan email ini.",
+		"Halo %s,\n\nKode verifikasi email akun Anda adalah:\n\n%s\n\nKode ini berlaku selama 15 menit. Jika Anda tidak merasa mendaftar, abaikan email ini.",
 		name,
-		verifyURL,
-		verifyToken,
+		code,
 	)
 
-	err = SendEmail(email, "Verifikasi Email Akun", body)
+	err := SendEmail(email, "Verifikasi Email Akun", body)
 	if err != nil {
 		return err
 	}
@@ -154,17 +148,17 @@ func SendVerificationEmail(userID uint, email string, name string) error {
 }
 
 // SendVerificationEmailWithContext sends a verification email with context timeout
-func SendVerificationEmailWithContext(ctx context.Context, userID uint, email string, name string) error {
+func SendVerificationEmailWithContext(ctx context.Context, email string, name string, code string) error {
 	// Wrap the email sending in a timeout context
 	sendCtx, cancel := context.WithTimeout(ctx, constants.EmailTimeout)
 	defer cancel()
-	
+
 	// Use a channel to handle the asynchronous operation
 	resultChan := make(chan error, 1)
 	go func() {
-		resultChan <- SendVerificationEmail(userID, email, name)
+		resultChan <- SendVerificationEmail(email, name, code)
 	}()
-	
+
 	select {
 	case <-sendCtx.Done():
 		return fmt.Errorf("email sending timed out after %v", constants.EmailTimeout)

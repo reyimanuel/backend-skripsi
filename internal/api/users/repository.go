@@ -155,7 +155,18 @@ func (r *Repository) UpdateStudentAdminVerification(tx *gorm.DB, studentID uint,
 }
 
 func (r *Repository) SetUserEmailVerified(tx *gorm.DB, userID uint, verifiedAt time.Time) error {
-	return tx.Model(&migration.User{}).Where("id = ?", userID).Update("email_verified_at", verifiedAt).Error
+	return tx.Model(&migration.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"email_verified_at":             verifiedAt,
+		"email_verification_code_hash":  "",
+		"email_verification_expires_at": nil,
+	}).Error
+}
+
+func (r *Repository) SetUserEmailVerificationCode(tx *gorm.DB, userID uint, codeHash string, expiresAt time.Time) error {
+	return tx.Model(&migration.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"email_verification_code_hash":  codeHash,
+		"email_verification_expires_at": expiresAt,
+	}).Error
 }
 
 func (r *Repository) ClearStudentKredensial(tx *gorm.DB, studentID uint) error {

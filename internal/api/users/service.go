@@ -27,6 +27,8 @@ type Service struct {
 	Repo *Repository
 }
 
+const emailVerificationCodeTTL = 15 * time.Minute
+
 func NewService(repo *Repository) *Service {
 	return &Service{
 		Repo: repo,
@@ -79,7 +81,7 @@ func (s *Service) RefreshToken(req RefreshTokenRequest) (*Response, error) {
 	if err != nil {
 		return nil, errs.Unauthorized("Refresh token tidak valid")
 	}
-	
+
 	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -133,19 +135,19 @@ func (s *Service) Logout(userID uint, req *LogoutRequest) (*Response, error) {
 }
 
 func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipart.FileHeader) (*Response, error) {
-		if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
-			return nil, errs.BadRequest("NIM sudah terdaftar")
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("error checking NIM uniqueness: err=%v", err)
-			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-		}
+	if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
+		return nil, errs.BadRequest("NIM sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking NIM uniqueness: err=%v", err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
 
 	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
-			return nil, errs.BadRequest("Email sudah terdaftar")
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("error checking email uniqueness: err=%v", err)
-			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-		}
+		return nil, errs.BadRequest("Email sudah terdaftar")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("error checking email uniqueness: err=%v", err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
@@ -196,7 +198,7 @@ func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipa
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
 	}
 
-	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
+	if err := s.issueEmailVerificationCode(context.Background(), user); err != nil {
 		log.Printf("error sending verification email: %v", err)
 	}
 
@@ -261,7 +263,7 @@ func (s *Service) GetPendingStudents(page, pageSize int) (*Response, error) {
 		Message:    "Data mahasiswa pending berhasil diambil",
 		Data: PendingStudentListData{
 			Items: result,
-			Meta:  PaginationMeta{
+			Meta: PaginationMeta{
 				Page:     page,
 				PageSize: pageSize,
 				Total:    total,
@@ -315,7 +317,7 @@ func (s *Service) GetAllUsers(page, pageSize int) (*Response, error) {
 		Message:    "Data users berhasil diambil",
 		Data: UserListData{
 			Items: result,
-			Meta:  PaginationMeta{
+			Meta: PaginationMeta{
 				Page:     page,
 				PageSize: pageSize,
 				Total:    total,
@@ -344,14 +346,14 @@ func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Res
 				break
 			}
 		}
-		
+
 		if isAdmin {
 			adminCount, err := s.Repo.CountAdminsWithRole("ADMIN")
 			if err != nil {
 				log.Printf("error counting admins: %v", err)
 				return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 			}
-			
+
 			if adminCount <= 1 {
 				return nil, errs.Forbidden("Tidak dapat tidak-mengaktifkan admin terakhir")
 			}
@@ -428,14 +430,14 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 		log.Printf("error counting admins: %v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
-	
+
 	// Check if the user being deleted is an admin
 	user, err := s.Repo.GetUserByID(s.Repo.DB, userID)
 	if err != nil {
 		log.Printf("error fetching user by id: %v", err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
-	
+
 	isAdmin := false
 	for _, role := range user.Roles {
 		if role.Code == "ADMIN" {
@@ -443,7 +445,7 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 			break
 		}
 	}
-	
+
 	// If user is admin and this would be the last admin, prevent deletion
 	if isAdmin && adminCount <= 1 {
 		return nil, errs.Forbidden("Tidak dapat menghapus admin terakhir")
@@ -640,24 +642,28 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 }
 
 func (s *Service) VerifyEmail(req VerifyEmailRequest) (*Response, error) {
-	userID, email, err := token.ValidateEmailVerificationToken(req.Token)
-	if err != nil {
-		return nil, errs.BadRequest("Token verifikasi tidak valid")
-	}
+	email := strings.TrimSpace(req.Email)
+	code := strings.TrimSpace(req.Code)
 
-	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	usr, err := s.Repo.GetByEmail(email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("User tidak ditemukan")
 		}
-		log.Printf("error fetching user for email verification: user_id=%d err=%v", userID, err)
+		log.Printf("error fetching user for email verification: email=%q err=%v", email, err)
 		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-	if !strings.EqualFold(strings.TrimSpace(usr.Email), strings.TrimSpace(email)) {
-		return nil, errs.BadRequest("Token verifikasi tidak sesuai")
 	}
 	if usr.EmailVerifiedAt != nil {
 		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
+	}
+	if strings.TrimSpace(usr.EmailVerificationCodeHash) == "" || usr.EmailVerificationExpiresAt == nil {
+		return nil, errs.BadRequest("Kode verifikasi belum tersedia. Silakan kirim ulang kode.")
+	}
+	if time.Now().After(*usr.EmailVerificationExpiresAt) {
+		return nil, errs.BadRequest("Kode verifikasi sudah kedaluwarsa. Silakan kirim ulang kode.")
+	}
+	if !helpers.CheckPasswordHash(code, usr.EmailVerificationCodeHash) {
+		return nil, errs.BadRequest("Kode verifikasi tidak valid")
 	}
 
 	now := time.Now()
@@ -683,7 +689,7 @@ func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Respo
 		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
 	}
 
-	if err := helpers.SendVerificationEmailWithContext(context.Background(), usr.ID, usr.Email, usr.Name); err != nil {
+	if err := s.issueEmailVerificationCode(context.Background(), usr); err != nil {
 		log.Printf("error resend verification email: %v", err)
 		return nil, errs.InternalServerError("Gagal mengirim ulang email verifikasi")
 	}
@@ -795,7 +801,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest, signatureFil
 		return nil, errs.InternalServerError("gagal membuat akun staff")
 	}
 
-	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
+	if err := s.issueEmailVerificationCode(context.Background(), user); err != nil {
 		log.Printf("error sending staff verification email: %v", err)
 	}
 
@@ -896,7 +902,7 @@ func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipa
 		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
 	}
 
-	if err := helpers.SendVerificationEmailWithContext(context.Background(), user.ID, user.Email, user.Name); err != nil {
+	if err := s.issueEmailVerificationCode(context.Background(), user); err != nil {
 		log.Printf("error sending verification email: %v", err)
 	}
 
@@ -1073,4 +1079,22 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 	}
 
 	return nil
+}
+
+func (s *Service) issueEmailVerificationCode(ctx context.Context, usr *migration.User) error {
+	code, err := helpers.GenerateEmailVerificationCode()
+	if err != nil {
+		return err
+	}
+
+	codeHash, err := helpers.HashPassword(code)
+	if err != nil {
+		return err
+	}
+
+	if err := s.Repo.SetUserEmailVerificationCode(s.Repo.DB, usr.ID, codeHash, time.Now().Add(emailVerificationCodeTTL)); err != nil {
+		return err
+	}
+
+	return helpers.SendVerificationEmailWithContext(ctx, usr.Email, usr.Name, code)
 }

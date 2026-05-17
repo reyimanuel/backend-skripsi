@@ -102,8 +102,8 @@ type PaginationMeta struct {
 
 // GetUsersQuery represents query parameters for user list endpoints
 type GetUsersQuery struct {
-	Page     int    `form:"page" default:"1"`
-	PageSize int    `form:"page_size" default:"20"`
+	Page     int `form:"page" default:"1"`
+	PageSize int `form:"page_size" default:"20"`
 }
 
 type RejectStudentRequest struct {
@@ -121,7 +121,8 @@ type ApproveStudentRequest struct {
 }
 
 type VerifyEmailRequest struct {
-	Token string `json:"token" binding:"required"`
+	Email string `json:"email" binding:"required,email"`
+	Code  string `json:"code" binding:"required,len=5,numeric"`
 }
 
 type ResendVerificationRequest struct {
