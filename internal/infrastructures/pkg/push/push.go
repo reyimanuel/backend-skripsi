@@ -227,7 +227,42 @@ func revokeTokens(tx *gorm.DB, tokens []string, revokedAt time.Time) error {
 }
 
 func sendMulticast(ctx context.Context, client *messaging.Client, tokens []string, notification *messaging.Notification, data map[string]string) (*messaging.BatchResponse, error) {
-	msg := &messaging.MulticastMessage{Tokens: tokens, Notification: notification, Data: data}
+	tag := "sitara-notification"
+	if data != nil {
+		if typ := strings.TrimSpace(data["type"]); typ != "" {
+			tag = "sitara-" + typ
+		}
+		if letterID := strings.TrimSpace(data["letter_id"]); letterID != "" {
+			tag += "-" + letterID
+		}
+		if studentUserID := strings.TrimSpace(data["student_user_id"]); studentUserID != "" {
+			tag += "-" + studentUserID
+		}
+	}
+
+	msg := &messaging.MulticastMessage{
+		Tokens:       tokens,
+		Notification: notification,
+		Data:         data,
+		Webpush: &messaging.WebpushConfig{
+			Headers: map[string]string{
+				"TTL":     "4500",
+				"Urgency": "high",
+			},
+			Data: data,
+			Notification: &messaging.WebpushNotification{
+				Title:              notification.Title,
+				Body:               notification.Body,
+				Icon:               "/icons/android-chrome-192x192.png",
+				Badge:              "/icons/android-chrome-192x192.png",
+				Tag:                tag,
+				Renotify:           true,
+				RequireInteraction: true,
+				Silent:             false,
+				Vibrate:            []int{200, 100, 200},
+			},
+		},
+	}
 	if resp, err := client.SendEachForMulticast(ctx, msg); err == nil {
 		return resp, nil
 	}
