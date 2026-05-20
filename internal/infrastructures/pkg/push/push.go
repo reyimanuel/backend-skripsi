@@ -115,7 +115,7 @@ func sendToTokens(ctx context.Context, db *gorm.DB, tokens []string, title strin
 		}
 		chunk := tokens[start:end]
 
-		batch, err := sendMulticast(ctx, client, chunk, &messaging.Notification{Title: title, Body: body}, data)
+		batch, err := sendMulticast(ctx, client, chunk, title, body, data)
 		if err != nil {
 			return nil, err
 		}
@@ -127,6 +127,7 @@ func sendToTokens(ctx context.Context, db *gorm.DB, tokens []string, title strin
 				continue
 			}
 			failureCount++
+			log.Printf("push: token delivery failed: token=%s err=%v", redactToken(chunk[idx]), r.Error)
 			if isUnregisteredTokenError(r.Error) {
 				revokedTokens = append(revokedTokens, chunk[idx])
 			}
@@ -226,7 +227,7 @@ func revokeTokens(tx *gorm.DB, tokens []string, revokedAt time.Time) error {
 		Updates(map[string]any{"revoked_at": true, "updated_at": revokedAt}).Error
 }
 
-func sendMulticast(ctx context.Context, client *messaging.Client, tokens []string, notification *messaging.Notification, data map[string]string) (*messaging.BatchResponse, error) {
+func sendMulticast(ctx context.Context, client *messaging.Client, tokens []string, title string, body string, data map[string]string) (*messaging.BatchResponse, error) {
 	tag := "sitara-notification"
 	if data != nil {
 		if typ := strings.TrimSpace(data["type"]); typ != "" {
@@ -240,27 +241,29 @@ func sendMulticast(ctx context.Context, client *messaging.Client, tokens []strin
 		}
 	}
 
+	payloadData := make(map[string]string, len(data)+3)
+	for key, value := range data {
+		payloadData[key] = value
+	}
+	if strings.TrimSpace(payloadData["title"]) == "" {
+		payloadData["title"] = title
+	}
+	if strings.TrimSpace(payloadData["body"]) == "" {
+		payloadData["body"] = body
+	}
+	if strings.TrimSpace(payloadData["tag"]) == "" {
+		payloadData["tag"] = tag
+	}
+
 	msg := &messaging.MulticastMessage{
-		Tokens:       tokens,
-		Notification: notification,
-		Data:         data,
+		Tokens: tokens,
+		Data:   payloadData,
 		Webpush: &messaging.WebpushConfig{
 			Headers: map[string]string{
 				"TTL":     "4500",
 				"Urgency": "high",
 			},
-			Data: data,
-			Notification: &messaging.WebpushNotification{
-				Title:              notification.Title,
-				Body:               notification.Body,
-				Icon:               "/icons/android-chrome-192x192.png",
-				Badge:              "/icons/android-chrome-192x192.png",
-				Tag:                tag,
-				Renotify:           true,
-				RequireInteraction: true,
-				Silent:             false,
-				Vibrate:            []int{200, 100, 200},
-			},
+			Data: payloadData,
 		},
 	}
 	if resp, err := client.SendEachForMulticast(ctx, msg); err == nil {
@@ -277,7 +280,16 @@ func isUnregisteredTokenError(err error) bool {
 	return strings.Contains(msg, "not registered") ||
 		strings.Contains(msg, "registration-token-not-registered") ||
 		strings.Contains(msg, "unregistered") ||
-		strings.Contains(msg, "invalid registration")
+		strings.Contains(msg, "invalid registration") ||
+		strings.Contains(msg, "registration token is not a valid")
+}
+
+func redactToken(token string) string {
+	token = strings.TrimSpace(token)
+	if len(token) <= 12 {
+		return "***"
+	}
+	return token[:6] + "..." + token[len(token)-6:]
 }
 
 func uniqueStrings(in []string) []string {
