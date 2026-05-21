@@ -41,6 +41,12 @@ func (s *Service) SendTest(userID uint, req SendTestNotificationRequest) (*Respo
 	if res.Tokens == 0 {
 		return nil, errs.BadRequest("Token notifikasi belum terdaftar")
 	}
+	if res.Success == 0 {
+		return nil, errs.BadRequestWithData(
+			"Notifikasi gagal dikirim ke semua token. Kemungkinan: token sudah kadaluarsa/invalid, izin notifikasi ditolak, atau Firebase project (credentials) tidak cocok dengan token.",
+			SendResult{Tokens: res.Tokens, Success: res.Success, Failure: res.Failure, Revoked: res.Revoked},
+		)
+	}
 
 	return &Response{
 		StatusCode: http.StatusOK,
@@ -103,7 +109,7 @@ func (s *Service) GetStatus(userID uint) (*Response, error) {
 	var activeTokens int64
 	if err := s.Repo.DB.Model(&migration.UserDeviceToken{}).
 		Where("user_id = ?", userID).
-		Where("revoked_at = ?", false).
+		Where("(revoked_at = ? OR revoked_at IS NULL)", false).
 		Where("token <> ''").
 		Count(&activeTokens).Error; err != nil {
 		log.Printf("notification status failed: user_id=%d err=%v", userID, err)

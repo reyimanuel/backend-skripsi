@@ -173,7 +173,7 @@ func listActiveTokensByUserIDs(db *gorm.DB, userIDs []uint) ([]string, error) {
 	var tokens []string
 	if err := db.Model(&migration.UserDeviceToken{}).
 		Where("user_id IN ?", userIDs).
-		Where("revoked_at = ?", false).
+		Where("(revoked_at = ? OR revoked_at IS NULL)", false).
 		Where("token <> ''").
 		Distinct().
 		Pluck("token", &tokens).Error; err != nil {

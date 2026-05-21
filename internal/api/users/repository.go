@@ -277,7 +277,7 @@ func (r *Repository) ListActiveDeviceTokensByUserID(tx *gorm.DB, userID uint) ([
 	var tokens []string
 	err := tx.Model(&migration.UserDeviceToken{}).
 		Where("user_id = ?", userID).
-		Where("revoked_at = ?", false).
+		Where("(revoked_at = ? OR revoked_at IS NULL)", false).
 		Where("token <> ''").
 		Pluck("token", &tokens).Error
 	if err != nil {
