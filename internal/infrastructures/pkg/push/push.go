@@ -255,13 +255,34 @@ func sendMulticast(ctx context.Context, client *messaging.Client, tokens []strin
 		payloadData["tag"] = tag
 	}
 
+	// IMPORTANT:
+	// - Data-only messages won't show native Android popups automatically.
+	// - Adding the Notification field allows the OS (and FCM SDKs) to display a notification
+	//   when the app is backgrounded, without requiring custom client-side handling.
 	msg := &messaging.MulticastMessage{
 		Tokens: tokens,
 		Data:   payloadData,
+		Notification: &messaging.Notification{
+			Title: title,
+			Body:  body,
+		},
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title: title,
+				Body:  body,
+				Tag:   tag,
+			},
+		},
 		Webpush: &messaging.WebpushConfig{
 			Headers: map[string]string{
 				"TTL":     "4500",
 				"Urgency": "high",
+			},
+			Notification: &messaging.WebpushNotification{
+				Title: title,
+				Body:  body,
+				Tag:   tag,
 			},
 			Data: payloadData,
 		},
