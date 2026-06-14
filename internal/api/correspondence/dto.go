@@ -51,7 +51,7 @@ type UploadAttachmentsResponse struct {
 
 type ApproveLetterRequest struct {
 	Action       string `json:"action" binding:"required,oneof=approve reject forward"`
-	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan
+	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan | wakil_dekan_1 | wakil_dekan_2 | wakil_dekan_3
 	LetterNumber string `json:"letter_number"`
 	Notes        string `json:"notes"`
 }
@@ -74,6 +74,7 @@ type LetterHistoryDetail struct {
 	LetterTypeID uint             `json:"letter_type_id"`
 	Subject      string           `json:"subject"`
 	Status       string           `json:"status"`
+	LetterNumber *string          `json:"letter_number,omitempty"`
 	Payload      map[string]any   `json:"payload"`
 	Attachments  []AttachmentItem `json:"attachments"`
 	Student      *StudentSummary  `json:"student,omitempty"`

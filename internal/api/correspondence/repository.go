@@ -114,11 +114,19 @@ func (r *Repository) CountApprovedThisYear(tx *gorm.DB) (int64, error) {
 	endOfYear := startOfYear.AddDate(1, 0, 0)
 
 	err := tx.Model(&migration.Letter{}).
-		Where("status = ?", "approved").
+		Where("status = ?", "signed").
 		Where("signed_at >= ? AND signed_at < ?", startOfYear, endOfYear).
 		Count(&count).Error
 
 	return count, err
+}
+
+func (r *Repository) GetOfficialByID(tx *gorm.DB, officialID uint) (*migration.Official, error) {
+	var official migration.Official
+	if err := tx.Preload("User").Where("id = ?", officialID).First(&official).Error; err != nil {
+		return nil, err
+	}
+	return &official, nil
 }
 
 func (r *Repository) IsLetterNumberUsed(tx *gorm.DB, letterNumber string, excludeLetterID uint) (bool, error) {

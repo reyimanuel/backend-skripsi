@@ -70,15 +70,18 @@ func runVerificationRefactorMigration(db *gorm.DB) error {
 	if err := db.Exec(`
 		DO $$
 		BEGIN
-			IF NOT EXISTS (
+			IF EXISTS (
 				SELECT 1
 				FROM pg_constraint
 				WHERE conname = 'students_admin_verification_status_check'
 			) THEN
 				ALTER TABLE students
-				ADD CONSTRAINT students_admin_verification_status_check
-				CHECK (admin_verification_status IN ('pending','approved','rejected'));
+				DROP CONSTRAINT students_admin_verification_status_check;
 			END IF;
+
+			ALTER TABLE students
+			ADD CONSTRAINT students_admin_verification_status_check
+			CHECK (admin_verification_status IN ('invited','pending','approved','rejected'));
 		END $$;
 	`).Error; err != nil {
 		fmt.Printf("⚠️  could not ensure students status check constraint: %v\n", err)

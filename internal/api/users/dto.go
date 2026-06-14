@@ -18,12 +18,13 @@ type LogoutRequest struct {
 // RegisterStudentRequest is received as multipart/form-data.
 // kredensial (bukti gambar KTM/KRS) is handled separately via ctx.FormFile("kredensial").
 type RegisterStudentRequest struct {
-	Name         string `form:"name"          binding:"required,safehtml"`
-	NIM          string `form:"nim"           binding:"required"`
-	Email        string `form:"email"         binding:"required,email"`
-	Password     string `form:"password"      binding:"required,strongpassword"`
-	ProgramStudi string `form:"program_studi" binding:"required,safehtml"`
-	Angkatan     int    `form:"angkatan"      binding:"required"`
+	Name                string `form:"name"          binding:"required,safehtml"`
+	NIM                 string `form:"nim"           binding:"required"`
+	Email               string `form:"email"         binding:"required,email"`
+	Password            string `form:"password"      binding:"required,strongpassword"`
+	ProgramStudi        string `form:"program_studi" binding:"required,safehtml"`
+	Angkatan            int    `form:"angkatan"      binding:"required"`
+	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
 }
 
 type Response struct {
@@ -45,6 +46,7 @@ type PendingStudentResponse struct {
 	NIM                     string     `json:"nim"`
 	ProgramStudi            string     `json:"program_studi"`
 	Angkatan                int        `json:"angkatan"`
+	SemesterMasukKuliah     string     `json:"semester_masuk_kuliah"`
 	Kredensial              string     `json:"kredensial,omitempty"`
 	AdminVerificationStatus string     `json:"admin_verification_status"`
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
@@ -61,18 +63,20 @@ type PendingStudentListData struct {
 // RegisterWithKRSRequest is received as multipart/form-data.
 // The KRS image is handled separately via ctx.FormFile("krs").
 type RegisterWithKRSRequest struct {
-	Email    string `form:"email"    binding:"required,email"`
-	Password string `form:"password" binding:"required,strongpassword"`
+	Email               string `form:"email"    binding:"required,email"`
+	Password            string `form:"password" binding:"required,strongpassword"`
+	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
 }
 
 // KRSPreviewResponse is returned after a successful KRS-based registration
 // so the student can confirm which data was extracted from their document.
 type KRSPreviewResponse struct {
-	UserID       uint   `json:"user_id"`
-	Name         string `json:"name"`
-	NIM          string `json:"nim"`
-	ProgramStudi string `json:"program_studi"`
-	Angkatan     int    `json:"angkatan"`
+	UserID              uint   `json:"user_id"`
+	Name                string `json:"name"`
+	NIM                 string `json:"nim"`
+	ProgramStudi        string `json:"program_studi"`
+	Angkatan            int    `json:"angkatan"`
+	SemesterMasukKuliah string `json:"semester_masuk_kuliah"`
 }
 
 type UserListResponse struct {
@@ -114,10 +118,11 @@ type RejectStudentRequest struct {
 // (e.g., to fix OCR ambiguities based on the uploaded KRS/KTM).
 // If a field is omitted/empty, it will not be updated.
 type ApproveStudentRequest struct {
-	Name         string `json:"name,omitempty"`
-	NIM          string `json:"nim,omitempty"`
-	ProgramStudi string `json:"program_studi,omitempty"`
-	Angkatan     *int   `json:"angkatan,omitempty"`
+	Name                string `json:"name,omitempty"`
+	NIM                 string `json:"nim,omitempty"`
+	ProgramStudi        string `json:"program_studi,omitempty"`
+	Angkatan            *int   `json:"angkatan,omitempty"`
+	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
 }
 
 type VerifyEmailRequest struct {
@@ -127,6 +132,38 @@ type VerifyEmailRequest struct {
 
 type ResendVerificationRequest struct {
 	Email string `json:"email" binding:"required,email"`
+}
+
+type CreateStudentInvitationRequest struct {
+	Name                string `json:"name" binding:"required,safehtml"`
+	NIM                 string `json:"nim" binding:"required"`
+	Email               string `json:"email" binding:"required,email"`
+	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
+}
+
+type BulkStudentInvitationRowResult struct {
+	Row                 int    `json:"row"`
+	Name                string `json:"name,omitempty"`
+	NIM                 string `json:"nim,omitempty"`
+	Email               string `json:"email,omitempty"`
+	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
+	Status              string `json:"status"`
+	Error               string `json:"error,omitempty"`
+}
+
+type BulkStudentInvitationImportData struct {
+	TotalCount   int                              `json:"total_count"`
+	SuccessCount int                              `json:"success_count"`
+	FailedCount  int                              `json:"failed_count"`
+	Items        []BulkStudentInvitationRowResult `json:"items"`
+}
+
+type CompleteStudentInvitationRequest struct {
+	Token               string `form:"token" binding:"required"`
+	Password            string `form:"password" binding:"required,strongpassword"`
+	ProgramStudi        string `form:"program_studi" binding:"required,safehtml"`
+	Angkatan            int    `form:"angkatan" binding:"required"`
+	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
 }
 
 type MeResponse struct {
@@ -144,6 +181,7 @@ type MeResponse struct {
 	NIM                     string     `json:"nim,omitempty"`
 	ProgramStudi            string     `json:"program_studi,omitempty"`
 	Angkatan                int        `json:"angkatan,omitempty"`
+	SemesterMasukKuliah     string     `json:"semester_masuk_kuliah,omitempty"`
 	KredensialPath          string     `json:"kredensial_path,omitempty"`
 	AdminVerificationStatus string     `json:"admin_verification_status,omitempty"`
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
@@ -159,10 +197,14 @@ type MeResponse struct {
 }
 
 type CreateStaffRequest struct {
-	Name     string `form:"name" binding:"required"`
+	Name     string `form:"name" binding:"required,safehtml"`
 	Email    string `form:"email" binding:"required,email"`
-	Password string `form:"password" binding:"required,min=6"`
 	RoleCode string `form:"role_code" binding:"required,oneof=ADMIN DEKAN WAKIL_DEKAN"`
+}
+
+type CompleteStaffInvitationRequest struct {
+	Token    string `form:"token" binding:"required"`
+	Password string `form:"password" binding:"required,strongpassword"`
 
 	NIP     string `form:"nip"`
 	Pangkat string `form:"pangkat"`

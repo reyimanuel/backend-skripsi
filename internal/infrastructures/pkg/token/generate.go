@@ -49,3 +49,33 @@ func GenerateResetPasswordToken(userID uint, email string) (string, error) {
 
 	return token.SignedString(jwtConfig.privateKey)
 }
+
+func GenerateStaffInvitationToken(userID uint, email string, roleCode string) (string, error) {
+	token := jwt.New(jwt.SigningMethodRS256)
+
+	claims := token.Claims.(jwt.MapClaims)
+	claims["sub"] = userID
+	claims["email"] = email
+	claims["role_code"] = roleCode
+	claims["typ"] = "staff_invitation"
+	claims["iss"] = "myApp"
+	claims["iat"] = time.Now().Unix()
+	claims["exp"] = time.Now().Add(72 * time.Hour).Unix()
+
+	return token.SignedString(jwtConfig.privateKey)
+}
+
+func GenerateStudentInvitationToken(userID uint, email string, nim string) (string, error) {
+	token := jwt.New(jwt.SigningMethodRS256)
+
+	claims := token.Claims.(jwt.MapClaims)
+	claims["sub"] = userID
+	claims["email"] = email
+	claims["nim"] = nim
+	claims["typ"] = "student_invitation"
+	claims["iss"] = "myApp"
+	claims["iat"] = time.Now().Unix()
+	claims["exp"] = time.Now().Add(72 * time.Hour).Unix()
+
+	return token.SignedString(jwtConfig.privateKey)
+}

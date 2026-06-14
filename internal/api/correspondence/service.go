@@ -31,6 +31,7 @@ const (
 	statusSubmitted = "submitted"
 	statusForwarded = "forwarded"
 	statusApproved  = "approved"
+	statusSigned    = "signed"
 	statusRejected  = "rejected"
 
 	approvalPending  = "pending"
@@ -40,28 +41,35 @@ const (
 	historySubmitted = "SUBMITTED"
 	historyForwarded = "FORWARDED"
 	historyApproved  = "APPROVED"
+	historyNumbered  = "NUMBERED"
 	historyRejected  = "REJECTED"
 )
 
 var blockedPayloadFields = map[string]struct{}{
-	"mahasiswa":     {},
-	"nim":           {},
-	"program_studi": {},
-	"angkatan":      {},
-	"tanggal":       {},
-	"tahun_ajaran":  {},
-	"nomor_surat":   {},
-	"official":      {},
-	"nip":           {},
-	"pangkat":       {},
-	"jabatan":       {},
+	"mahasiswa":             {},
+	"tabel_data_mahasiswa":  {},
+	"nim":                   {},
+	"program_studi":         {},
+	"angkatan":              {},
+	"semester_masuk_kuliah": {},
+	"tahun_ajaran":          {},
+	"nomor_surat":           {},
+	"official":              {},
+	"nip":                   {},
+	"pangkat":               {},
+	"jabatan":               {},
+	"ttd":                   {},
+	"tanda_tangan":          {},
+	"signature":             {},
 }
 
 var studentTemplateFields = map[string]struct{}{
-	"mahasiswa":     {},
-	"nim":           {},
-	"program_studi": {},
-	"angkatan":      {},
+	"mahasiswa":             {},
+	"tabel_data_mahasiswa":  {},
+	"nim":                   {},
+	"program_studi":         {},
+	"angkatan":              {},
+	"semester_masuk_kuliah": {},
 }
 
 type Service struct {
@@ -135,7 +143,7 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOffi
 func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Response, error) {
 	// Filter by requested status, but restrict to valid official statuses.
 	status := strings.TrimSpace(strings.ToLower(q.Status))
-	if status != statusForwarded && status != statusApproved && status != statusRejected {
+	if status != statusForwarded && status != statusApproved && status != statusSigned && status != statusRejected {
 		// Default to forwarded if invalid or empty.
 		status = statusForwarded
 	}
@@ -459,6 +467,10 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 				_ = os.Remove(newPath)
 				return errs.InternalServerError("gagal membaca berkas")
 			}
+			if helpers.IsTemplateImagePlaceholderKey(key) && mime != "image/png" && mime != "image/jpeg" {
+				_ = os.Remove(newPath)
+				return errs.BadRequest("berkas " + key + " harus berupa gambar PNG atau JPG")
+			}
 
 			att := &migration.LetterAttachment{
 				LetterID:       letterID,
@@ -588,9 +600,6 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 			return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
 		}
 
-		payloadMap["tanggal"] = helpers.FormatIndonesianDate(now)
-		payloadMap["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
-
 		// Validate template placeholders: ensure all required payload keys exist
 		// so the generated document won't keep any {{...}} tokens.
 		var templatePlaceholders []string
@@ -610,9 +619,16 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		}
 
 		ph := helpers.ClassifyTemplatePlaceholders(templatePlaceholders)
+		ensureLetterSystemPayload(payloadMap)
+
 		missingPayload := helpers.MissingPayloadKeys(payloadMap, ph.RequiredPayloadKeys)
 		if len(missingPayload) > 0 {
 			return errs.BadRequestWithData("Data surat belum lengkap", missingTemplateFieldsData{Missing: missingPayload})
+		}
+
+		imageKeys := templateImagePlaceholderKeys(templatePlaceholders)
+		if err := s.ensureAttachmentKeysPresent(tx, letterID, imageKeys); err != nil {
+			return err
 		}
 
 		// Persist the enriched payload so later steps (approve/history) can
@@ -637,6 +653,13 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		}
 
 		data := buildTemplateData(student, payloadForTemplate)
+		if len(imageKeys) > 0 {
+			atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
+			if err != nil {
+				return errs.InternalServerError("Gagal mengambil data berkas")
+			}
+			addTemplateImageAttachments(data, atts, imageKeys)
+		}
 
 		outputDocx := fmt.Sprintf("public/generated/letter_%d.docx", now.UnixNano())
 		if err := s.generateLetterDocument(template.FilePath, outputDocx, data); err != nil {
@@ -711,14 +734,6 @@ func parseRequiredAttachmentKeys(raw datatypes.JSON) ([]string, error) {
 func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
 	historyAction := historyApproved
 	message := "Surat berhasil disetujui"
-	switch req.Action {
-	case "reject":
-		historyAction = historyRejected
-		message = "Surat berhasil ditolak"
-	case "forward":
-		historyAction = historyForwarded
-		message = "Surat berhasil diteruskan"
-	}
 
 	var studentUserID uint
 	var subject string
@@ -752,10 +767,26 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		// Action gating by role + status.
 		switch req.Action {
 		case "forward":
-			if !isAdmin {
-				return errs.Forbidden("Hanya admin yang dapat meneruskan surat")
-			}
-			if letter.Status != statusSubmitted {
+			switch letter.Status {
+			case statusSubmitted:
+				if !isAdmin {
+					return errs.Forbidden("Hanya admin yang dapat meneruskan surat pada tahap ini")
+				}
+			case statusForwarded:
+				if !isOfficialRole {
+					return errs.Forbidden("Hanya pejabat yang dapat meneruskan surat forwarded")
+				}
+				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Data pejabat tidak ditemukan")
+				}
+				if letter.SignedByID == nil || *letter.SignedByID != officialActor.ID {
+					return errs.Forbidden("Surat ini tidak ditugaskan kepada Anda")
+				}
+				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
+					return err
+				}
+			default:
 				return errs.BadRequest("Surat tidak dalam status yang dapat diteruskan")
 			}
 		case "approve", "reject":
@@ -763,6 +794,9 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			case statusSubmitted:
 				if !isAdmin {
 					return errs.Forbidden("Hanya admin yang dapat memproses surat pada tahap ini")
+				}
+				if req.Action != "reject" {
+					return errs.BadRequest("Admin hanya dapat meneruskan atau menolak surat pada tahap ini")
 				}
 			case statusForwarded:
 				if !isOfficialRole {
@@ -779,6 +813,10 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
 					return err
 				}
+			case statusApproved:
+				if !isAdmin || req.Action != "approve" {
+					return errs.Forbidden("Hanya admin yang dapat mengisi nomor surat")
+				}
 			default:
 				return errs.BadRequest("Surat tidak dalam status yang dapat diproses")
 			}
@@ -794,6 +832,8 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 
 		switch req.Action {
 		case "reject":
+			historyAction = historyRejected
+			message = "Surat berhasil ditolak"
 			letter.Status = statusRejected
 			approval.Status = approvalRejected
 			approval.ApproverID = &userID
@@ -802,24 +842,17 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			notificationNotes = req.Notes
 
 		case "forward":
+			historyAction = historyForwarded
+			message = "Surat berhasil diteruskan"
 			official, err := s.resolveOfficial(tx, req.SignedByRole)
 			if err != nil {
 				return err
 			}
 
 			// Move approval stage to selected official role (pending).
-			normalized := strings.ToLower(strings.TrimSpace(req.SignedByRole))
-			normalized = strings.ReplaceAll(normalized, "_", " ")
-			normalized = strings.Join(strings.Fields(normalized), " ")
-			roleCode := ""
-			switch normalized {
-			case "dekan":
-				roleCode = "DEKAN"
-			case "wakil dekan":
-				roleCode = "WAKIL_DEKAN"
-			}
-			if roleCode == "" {
-				return errs.BadRequest("Penandatangan tidak valid")
+			_, roleCode, err := officialTargetsForRole(req.SignedByRole)
+			if err != nil {
+				return err
 			}
 			role, err := s.UsersRepo.GetRoleByCode(tx, roleCode)
 			if err != nil {
@@ -836,9 +869,27 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			notificationNotes = req.Notes
 
 		case "approve":
+			if letter.Status == statusForwarded {
+				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				if err != nil {
+					return errs.Forbidden("Data pejabat tidak ditemukan")
+				}
+
+				letter.Status = statusApproved
+				letter.SignedByID = &officialActor.ID
+				letter.SignedAt = nil
+				approval.Status = approvalApproved
+				approval.ApproverID = &userID
+				approval.Notes = req.Notes
+				approval.ApprovedAt = &now
+				notificationNotes = req.Notes
+				message = "Surat berhasil disetujui dan menunggu nomor surat"
+				break
+			}
+
 			nomorSurat := strings.TrimSpace(req.LetterNumber)
 			if nomorSurat == "" {
-				return errs.BadRequest("Nomor surat wajib diisi saat approve")
+				return errs.BadRequest("Nomor surat wajib diisi")
 			}
 
 			used, err := s.Repo.IsLetterNumberUsed(tx, nomorSurat, letter.ID)
@@ -848,20 +899,13 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			if used {
 				return errs.BadRequest("Nomor surat sudah digunakan")
 			}
-
-			var official *migration.Official
-			if letter.Status == statusForwarded {
-				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
-				if err != nil {
-					return errs.Forbidden("Data pejabat tidak ditemukan")
-				}
-				official = officialActor
-			} else {
-				o, err := s.resolveOfficial(tx, req.SignedByRole)
-				if err != nil {
-					return err
-				}
-				official = o
+			if letter.SignedByID == nil {
+				return errs.BadRequest("Pejabat penandatangan belum tersedia")
+			}
+			official, err := s.Repo.GetOfficialByID(tx, *letter.SignedByID)
+			if err != nil {
+				log.Printf("approved official not found: official_id=%d err=%v", *letter.SignedByID, err)
+				return errs.NotFound("Pejabat penandatangan tidak ditemukan")
 			}
 
 			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
@@ -869,6 +913,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				log.Printf("template not found: letter_type_id=%d err=%v", letter.LetterTypeID, err)
 				return errs.NotFound("Template surat tidak ditemukan")
 			}
+			templatePlaceholders := extractTemplatePlaceholdersForLetterType(template, letter.LetterTypeID)
 
 			payloadMap, err := unmarshalPayload(letter.Payload)
 			if err != nil {
@@ -876,7 +921,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
 			}
 
-			payloadMap = buildApprovedPayload(payloadMap, now, nomorSurat, official)
+			payloadMap = buildApprovedPayload(payloadMap, nomorSurat, official)
 			payloadJSON, err := marshalPayload(payloadMap)
 			if err != nil {
 				log.Printf("error marshaling approved payload: %v", err)
@@ -884,22 +929,29 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			}
 
 			output := fmt.Sprintf("public/generated/final_%d.docx", letter.ID)
-			if err := s.generateLetterDocument(template.FilePath, output, buildTemplateData(student, payloadMap)); err != nil {
+			data := buildTemplateData(student, payloadMap)
+			imageKeys := templateImagePlaceholderKeys(templatePlaceholders)
+			if len(imageKeys) > 0 {
+				atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
+				if err != nil {
+					return errs.InternalServerError("Gagal mengambil data berkas")
+				}
+				addTemplateImageAttachments(data, atts, imageKeys)
+			}
+			if err := s.generateLetterDocument(template.FilePath, output, data); err != nil {
 				return err
 			}
 
-			letter.Status = statusApproved
+			letter.Status = statusSigned
 			letter.FilePath = output
 			letter.Payload = payloadJSON
 			letter.LetterNumber = &nomorSurat
 			letter.SignedByID = &official.ID
 			letter.SignedAt = &now
 
-			approval.Status = approvalApproved
-			approval.ApproverID = &userID
-			approval.Notes = req.Notes
-			approval.ApprovedAt = &now
 			notificationNotes = req.Notes
+			historyAction = historyNumbered
+			message = "Nomor surat berhasil disimpan"
 		}
 
 		if err := tx.Save(letter).Error; err != nil {
@@ -933,9 +985,15 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		nType := "letter_status_changed"
 		switch req.Action {
 		case "approve":
-			title = "Surat Disetujui"
-			body = fmt.Sprintf("Surat '%s' telah disetujui", subject)
-			nType = "letter_approved"
+			if resultingStatus == statusSigned {
+				title = "Surat Selesai"
+				body = fmt.Sprintf("Surat '%s' telah diberi nomor dan ditandatangani", subject)
+				nType = "letter_signed"
+			} else {
+				title = "Surat Disetujui Pejabat"
+				body = fmt.Sprintf("Surat '%s' telah disetujui dan menunggu nomor surat", subject)
+				nType = "letter_approved"
+			}
 		case "reject":
 			title = "Surat Ditolak"
 			body = fmt.Sprintf("Surat '%s' ditolak", subject)
@@ -991,7 +1049,7 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 			if letter.StudentID != student.ID {
 				return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
 			}
-			if letter.Status == statusForwarded || letter.Status == statusApproved {
+			if letter.Status == statusForwarded || letter.Status == statusApproved || letter.Status == statusSigned {
 				return errs.BadRequest("Surat tidak dapat dihapus pada status saat ini")
 			}
 		}
@@ -1125,6 +1183,7 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 			LetterTypeID: letter.LetterTypeID,
 			Subject:      letter.Subject,
 			Status:       letter.Status,
+			LetterNumber: letter.LetterNumber,
 			Payload:      payloadMap,
 			Attachments:  items,
 			Student: &StudentSummary{
@@ -1168,6 +1227,7 @@ func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*R
 		statusSubmitted: {},
 		statusForwarded: {},
 		statusApproved:  {},
+		statusSigned:    {},
 		statusRejected:  {},
 	}
 	if _, ok := allowedStatus[strings.TrimSpace(q.Status)]; !ok {
@@ -1313,30 +1373,54 @@ func parseTimeOrDate(value string) (time.Time, error) {
 // private helpers
 
 func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.Official, error) {
-	if signedByRole == "" {
-		return nil, errs.BadRequest("Penandatangan wajib dipilih")
-	}
-
-	// Only allow letter signers to be Dean / Vice Dean.
-	// We accept a few client variants (case-insensitive, underscores/spaces).
-	normalized := strings.ToLower(strings.TrimSpace(signedByRole))
-	normalized = strings.ReplaceAll(normalized, "_", " ")
-	normalized = strings.Join(strings.Fields(normalized), " ")
-	if normalized != "dekan" && normalized != "wakil dekan" {
-		return nil, errs.BadRequest("Penandatangan hanya boleh Dekan atau Wakil Dekan")
-	}
-
-	official, err := s.UsersRepo.GetActiveOfficialByRole(tx, normalized)
+	targets, _, err := officialTargetsForRole(signedByRole)
 	if err != nil {
-		log.Printf("official not found: jabatan=%q err=%v", normalized, err)
-		return nil, errs.NotFound("Pejabat dengan jabatan '" + normalized + "' tidak ditemukan atau tidak aktif")
-	}
-
-	if err := policy.CanOfficialAct(&official.User, official); err != nil {
 		return nil, err
 	}
 
-	return official, nil
+	var lastErr error
+	for _, target := range targets {
+		official, err := s.UsersRepo.GetActiveOfficialByRole(tx, target)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if err := policy.CanOfficialAct(&official.User, official); err != nil {
+			return nil, err
+		}
+
+		return official, nil
+	}
+
+	log.Printf("official not found: jabatan_candidates=%v err=%v", targets, lastErr)
+	return nil, errs.NotFound("Pejabat penandatangan tidak ditemukan atau tidak aktif")
+}
+
+func officialTargetsForRole(signedByRole string) ([]string, string, error) {
+	if signedByRole == "" {
+		return nil, "", errs.BadRequest("Penandatangan wajib dipilih")
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(signedByRole))
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.ReplaceAll(normalized, "-", " ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+
+	switch normalized {
+	case "dekan":
+		return []string{"dekan"}, "DEKAN", nil
+	case "wakil dekan":
+		return []string{"wakil dekan"}, "WAKIL_DEKAN", nil
+	case "wakil dekan 1", "wakil dekan i", "wakil dekan satu":
+		return []string{"wakil dekan 1", "wakil dekan i", "wakil dekan satu"}, "WAKIL_DEKAN", nil
+	case "wakil dekan 2", "wakil dekan ii", "wakil dekan dua":
+		return []string{"wakil dekan 2", "wakil dekan ii", "wakil dekan dua"}, "WAKIL_DEKAN", nil
+	case "wakil dekan 3", "wakil dekan iii", "wakil dekan tiga":
+		return []string{"wakil dekan 3", "wakil dekan iii", "wakil dekan tiga"}, "WAKIL_DEKAN", nil
+	default:
+		return nil, "", errs.BadRequest("Penandatangan tidak valid")
+	}
 }
 
 func (s *Service) generateLetterDocument(templatePath string, outputPath string, data map[string]string) error {
@@ -1379,14 +1463,72 @@ func buildSubmitPayload(payload map[string]any) map[string]any {
 	return copyPayload(payload, blockedPayloadFields)
 }
 
-func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNumber string, official *migration.Official) map[string]any {
+func ensureLetterSystemPayload(payload map[string]any) {
+	if raw, ok := payload["tahun_ajaran"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		payload["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
+	}
+}
+
+func templateImagePlaceholderKeys(placeholders []string) []string {
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, placeholder := range placeholders {
+		key := strings.TrimSpace(placeholder)
+		if !helpers.IsTemplateImagePlaceholderKey(key) {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func addTemplateImageAttachments(data map[string]string, atts []migration.LetterAttachment, imageKeys []string) {
+	wanted := make(map[string]struct{}, len(imageKeys))
+	for _, key := range imageKeys {
+		wanted[key] = struct{}{}
+	}
+	for _, att := range atts {
+		key := strings.TrimSpace(att.RequirementKey)
+		if _, ok := wanted[key]; !ok {
+			continue
+		}
+		data[key] = helpers.DocxImage(att.FilePath)
+	}
+}
+
+func (s *Service) ensureAttachmentKeysPresent(tx *gorm.DB, letterID uint, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	haveKeys, err := s.Repo.ListAttachmentKeysByLetterID(tx, letterID)
+	if err != nil {
+		return errs.InternalServerError("Gagal memeriksa berkas")
+	}
+	have := make(map[string]struct{}, len(haveKeys))
+	for _, key := range haveKeys {
+		have[strings.TrimSpace(key)] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, key := range keys {
+		if _, ok := have[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return errs.BadRequestWithData("Berkas wajib belum lengkap", missingAttachmentsData{Missing: missing})
+	}
+	return nil
+}
+
+func buildApprovedPayload(payload map[string]any, letterNumber string, official *migration.Official) map[string]any {
 	enriched := copyPayload(payload, nil)
 
-	if raw, ok := enriched["tahun_ajaran"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
-		enriched["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
-	}
+	ensureLetterSystemPayload(enriched)
 
-	enriched["tanggal"] = helpers.FormatIndonesianDate(approvedAt)
 	enriched["nomor_surat"] = letterNumber
 	enriched["official"] = official.User.Name
 	enriched["nip"] = official.NIP
@@ -1401,12 +1543,59 @@ func buildApprovedPayload(payload map[string]any, approvedAt time.Time, letterNu
 	return enriched
 }
 
+func additionalStudentRowsFromPayload(payload map[string]any) []helpers.DocxStudentTableRow {
+	raw, ok := payload["mahasiswa_lain"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	rows := make([]helpers.DocxStudentTableRow, 0)
+	stringValue := func(value any) string {
+		if value == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+	appendRow := func(nameValue, nimValue any) {
+		name := stringValue(nameValue)
+		nim := stringValue(nimValue)
+		if name == "" && nim == "" {
+			return
+		}
+		rows = append(rows, helpers.DocxStudentTableRow{Name: name, NIM: nim})
+	}
+
+	switch value := raw.(type) {
+	case []any:
+		for _, item := range value {
+			if row, ok := item.(map[string]any); ok {
+				appendRow(row["name"], row["nim"])
+			}
+		}
+	case []map[string]any:
+		for _, row := range value {
+			appendRow(row["name"], row["nim"])
+		}
+	case []helpers.DocxStudentTableRow:
+		for _, row := range value {
+			appendRow(row.Name, row.NIM)
+		}
+	}
+
+	return rows
+}
+
 func buildTemplateData(student *migration.Student, payload map[string]any) map[string]string {
 	data := map[string]string{
-		"mahasiswa":     student.User.Name,
-		"nim":           student.NIM,
-		"program_studi": student.ProgramStudi,
-		"angkatan":      fmt.Sprintf("%d/%d", student.Angkatan, student.Angkatan+1),
+		"mahasiswa":             student.User.Name,
+		"nim":                   student.NIM,
+		"program_studi":         student.ProgramStudi,
+		"angkatan":              fmt.Sprintf("%d/%d", student.Angkatan, student.Angkatan+1),
+		"semester_masuk_kuliah": student.SemesterMasukKuliah,
+		"tabel_data_mahasiswa": helpers.DocxStudentTable(append(
+			[]helpers.DocxStudentTableRow{{Name: student.User.Name, NIM: student.NIM}},
+			additionalStudentRowsFromPayload(payload)...,
+		)),
 	}
 
 	for key, value := range payload {

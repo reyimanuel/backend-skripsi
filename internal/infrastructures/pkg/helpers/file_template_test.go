@@ -132,3 +132,144 @@ func TestFillTemplate_EmbedsImageForDocxDirective(t *testing.T) {
 		t.Fatalf("expected embedded media file")
 	}
 }
+
+func writeMinimalDocx(t *testing.T, path string, documentXML string) {
+	t.Helper()
+
+	out, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create docx: %v", err)
+	}
+	defer out.Close()
+
+	w := zip.NewWriter(out)
+	defer w.Close()
+
+	ct, _ := w.Create("[Content_Types].xml")
+	_, _ = ct.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`))
+
+	doc, _ := w.Create("word/document.xml")
+	_, _ = doc.Write([]byte(documentXML))
+}
+
+func readDocxDocumentXML(t *testing.T, path string) string {
+	t.Helper()
+
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open docx: %v", err)
+	}
+	defer zr.Close()
+
+	for _, f := range zr.File {
+		if f.Name != "word/document.xml" {
+			continue
+		}
+		rc, _ := f.Open()
+		b, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		return string(b)
+	}
+	t.Fatalf("missing word/document.xml")
+	return ""
+}
+
+func TestFillTemplate_RemovesOptionalStudentRowWhenEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "template.docx")
+	dst := filepath.Join(tmpDir, "out.docx")
+
+	writeMinimalDocx(t, src, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:tbl>
+			<w:tr><w:tc><w:p><w:r><w:t>1.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{mahasiswa}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nim}}</w:t></w:r></w:p></w:tc></w:tr>
+			<w:tr><w:tc><w:p><w:r><w:t>{{optional_mahasiswa_lain}}</w:t></w:r></w:p></w:tc></w:tr>
+			<w:tr><w:tc><w:p><w:r><w:t>2.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nama_mahasiswa_lain}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nim_mahasiswa_lain}}</w:t></w:r></w:p></w:tc></w:tr>
+		</w:tbl>
+	</w:body>
+</w:document>`)
+
+	if err := FillTemplate(src, dst, map[string]string{
+		"mahasiswa": "Miracle",
+		"nim":       "220211060001",
+	}); err != nil {
+		t.Fatalf("FillTemplate: %v", err)
+	}
+
+	docXML := readDocxDocumentXML(t, dst)
+	if strings.Contains(docXML, "{{optional_mahasiswa_lain}}") ||
+		strings.Contains(docXML, "{{nama_mahasiswa_lain}}") ||
+		strings.Contains(docXML, "{{nim_mahasiswa_lain}}") {
+		t.Fatalf("optional second student placeholders should be removed: %s", docXML)
+	}
+	if strings.Contains(docXML, ">2.<") {
+		t.Fatalf("second student row should be removed: %s", docXML)
+	}
+}
+
+func TestFillTemplate_KeepsOptionalStudentRowWhenFilled(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "template.docx")
+	dst := filepath.Join(tmpDir, "out.docx")
+
+	writeMinimalDocx(t, src, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:tbl>
+			<w:tr><w:tc><w:p><w:r><w:t>1.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{mahasiswa}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nim}}</w:t></w:r></w:p></w:tc></w:tr>
+			<w:tr><w:tc><w:p><w:r><w:t>{{optional_mahasiswa_lain}}2.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nama_mahasiswa_lain}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{nim_mahasiswa_lain}}</w:t></w:r></w:p></w:tc></w:tr>
+		</w:tbl>
+	</w:body>
+</w:document>`)
+
+	if err := FillTemplate(src, dst, map[string]string{
+		"mahasiswa":           "Miracle",
+		"nim":                 "220211060001",
+		"nama_mahasiswa_lain": "Yuliet",
+		"nim_mahasiswa_lain":  "220211060002",
+	}); err != nil {
+		t.Fatalf("FillTemplate: %v", err)
+	}
+
+	docXML := readDocxDocumentXML(t, dst)
+	if strings.Contains(docXML, "{{optional_mahasiswa_lain}}") {
+		t.Fatalf("optional marker should be removed: %s", docXML)
+	}
+	if !strings.Contains(docXML, "Yuliet") || !strings.Contains(docXML, "220211060002") {
+		t.Fatalf("second student row should be filled: %s", docXML)
+	}
+}
+
+func TestFillTemplate_ReplacesStudentTablePlaceholderWithGeneratedTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "template.docx")
+	dst := filepath.Join(tmpDir, "out.docx")
+
+	writeMinimalDocx(t, src, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:p><w:r><w:t>Daftar mahasiswa:</w:t></w:r></w:p>
+		<w:p><w:r><w:t>{{tabel data mahasiswa}}</w:t></w:r></w:p>
+	</w:body>
+</w:document>`)
+
+	if err := FillTemplate(src, dst, map[string]string{
+		"tabel_data_mahasiswa": DocxStudentTable([]DocxStudentTableRow{
+			{Name: "Miracle", NIM: "220211060001"},
+			{Name: "Yuliet", NIM: "220211060002"},
+		}),
+	}); err != nil {
+		t.Fatalf("FillTemplate: %v", err)
+	}
+
+	docXML := readDocxDocumentXML(t, dst)
+	if strings.Contains(docXML, "{{tabel_data_mahasiswa}}") {
+		t.Fatalf("student table placeholder should be removed: %s", docXML)
+	}
+	for _, expected := range []string{"<w:tbl>", "No", "Nama", "NIM", "Miracle", "220211060001", "Yuliet", "220211060002"} {
+		if !strings.Contains(docXML, expected) {
+			t.Fatalf("expected %q in generated document: %s", expected, docXML)
+		}
+	}
+}

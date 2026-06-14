@@ -166,3 +166,60 @@ func SendVerificationEmailWithContext(ctx context.Context, email string, name st
 		return err
 	}
 }
+
+func SendStaffInvitationEmail(email string, name string, invitedBy string, invitationLink string) error {
+	body := fmt.Sprintf(
+		"Halo %s,\n\nAnda diundang untuk melengkapi akun staff pada sistem administrasi surat.\n\nDiundang oleh: %s\n\nSilakan buka link berikut untuk mengatur kata sandi dan melengkapi data akun Anda:\n\n%s\n\nLink ini berlaku selama 72 jam. Jika Anda tidak mengenali undangan ini, abaikan email ini.",
+		name,
+		invitedBy,
+		invitationLink,
+	)
+
+	return SendEmail(email, "Undangan Aktivasi Akun Staff", body)
+}
+
+func SendStaffInvitationEmailWithContext(ctx context.Context, email string, name string, invitedBy string, invitationLink string) error {
+	sendCtx, cancel := context.WithTimeout(ctx, constants.EmailTimeout)
+	defer cancel()
+
+	resultChan := make(chan error, 1)
+	go func() {
+		resultChan <- SendStaffInvitationEmail(email, name, invitedBy, invitationLink)
+	}()
+
+	select {
+	case <-sendCtx.Done():
+		return fmt.Errorf("email sending timed out after %v", constants.EmailTimeout)
+	case err := <-resultChan:
+		return err
+	}
+}
+
+func SendStudentInvitationEmail(email string, name string, nim string, invitedBy string, invitationLink string) error {
+	body := fmt.Sprintf(
+		"Halo %s,\n\nAdmin telah membuat akun mahasiswa untuk Anda pada sistem administrasi surat.\n\nNIM: %s\nDiundang oleh: %s\n\nSilakan buka link berikut untuk mengatur kata sandi dan melengkapi data akun Anda:\n\n%s\n\nLink ini berlaku selama 72 jam. Jika Anda tidak mengenali undangan ini, abaikan email ini.",
+		name,
+		nim,
+		invitedBy,
+		invitationLink,
+	)
+
+	return SendEmail(email, "Undangan Aktivasi Akun Mahasiswa", body)
+}
+
+func SendStudentInvitationEmailWithContext(ctx context.Context, email string, name string, nim string, invitedBy string, invitationLink string) error {
+	sendCtx, cancel := context.WithTimeout(ctx, constants.EmailTimeout)
+	defer cancel()
+
+	resultChan := make(chan error, 1)
+	go func() {
+		resultChan <- SendStudentInvitationEmail(email, name, nim, invitedBy, invitationLink)
+	}()
+
+	select {
+	case <-sendCtx.Done():
+		return fmt.Errorf("email sending timed out after %v", constants.EmailTimeout)
+	case err := <-resultChan:
+		return err
+	}
+}

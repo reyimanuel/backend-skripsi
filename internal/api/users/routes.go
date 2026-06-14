@@ -19,17 +19,17 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		publicAuth.POST("/login", handler.Login)
 		publicAuth.POST("/refresh", handler.RefreshToken)
 	}
-	
+
 	// Public routes - registration and verification with moderate rate limiting
 	publicReg := r.Group("")
 	publicReg.Use(middleware.IPBasedLimiter(20, 20, 1*time.Hour)) // 20 requests per hour for registration/verification
 	{
-		publicReg.POST("/register", handler.RegisterStudent)
-		publicReg.POST("/register/krs", handler.RegisterWithKRS)
 		publicReg.POST("/verify-email", handler.VerifyEmail)
 		publicReg.POST("/resend-verification", handler.ResendVerificationEmail)
+		publicReg.POST("/staff-invitations/complete", handler.CompleteStaffInvitation)
+		publicReg.POST("/student-invitations/complete", handler.CompleteStudentInvitation)
 	}
-	
+
 	// Protected routes (require authentication)
 	r.POST("/logout", middleware.MiddlewareAuth, handler.Logout)
 	r.GET("/me", middleware.MiddlewareAuth, handler.GetMe)
@@ -44,6 +44,8 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		admin.PATCH("/:id", handler.AdminUpdateUser)
 		admin.DELETE("/:id", handler.AdminDeleteUser)
 		admin.GET("/pending/students", handler.GetPendingStudents)
+		admin.POST("/students/invitations", handler.CreateStudentInvitation)
+		admin.POST("/students/invitations/bulk", handler.BulkImportStudentInvitations)
 		admin.POST("/students/:id/approve", handler.ApproveStudent)
 		admin.POST("/students/:id/reject", handler.RejectStudent)
 		admin.POST("/staffs", handler.CreateStaff)

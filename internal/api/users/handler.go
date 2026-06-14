@@ -194,6 +194,74 @@ func (h *Handler) ResendVerificationEmail(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) CreateStudentInvitation(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	var req CreateStudentInvitationRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data undangan mahasiswa tidak valid"))
+		log.Printf("error binding create student invitation payload: %v", err)
+		return
+	}
+
+	response, err := h.Service.CreateStudentInvitation(adminID, req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) BulkImportStudentInvitations(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("File Excel atau CSV wajib dilampirkan"))
+		return
+	}
+
+	response, err := h.Service.BulkImportStudentInvitations(adminID, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) CompleteStudentInvitation(ctx *gin.Context) {
+	var req CompleteStudentInvitationRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data aktivasi mahasiswa tidak valid"))
+		log.Printf("error binding complete student invitation payload: %v", err)
+		return
+	}
+
+	file, err := ctx.FormFile("kredensial")
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("File kredensial wajib dilampirkan"))
+		return
+	}
+
+	response, err := h.Service.CompleteStudentInvitation(req, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) GetPendingStudents(ctx *gin.Context) {
 	var query GetUsersQuery
 	if err := ctx.ShouldBindQuery(&query); err != nil {
@@ -325,14 +393,29 @@ func (h *Handler) CreateStaff(ctx *gin.Context) {
 		return
 	}
 
-	// signature is uploaded as multipart file under form field "signature".
-	// It is required only when role_code is DEKAN/WAKIL_DEKAN; service enforces that.
+	response, err := h.Service.CreateStaff(adminID, req)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) CompleteStaffInvitation(ctx *gin.Context) {
+	var req CompleteStaffInvitationRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("Data aktivasi staff tidak valid"))
+		log.Printf("error binding complete staff invitation payload: %v", err)
+		return
+	}
+
 	signatureFile, err := ctx.FormFile("signature")
 	if err != nil {
 		signatureFile = nil
 	}
 
-	response, err := h.Service.CreateStaff(adminID, req, signatureFile)
+	response, err := h.Service.CompleteStaffInvitation(req, signatureFile)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

@@ -6,7 +6,7 @@ This project provides:
 - Authentication (JWT, role-based access control)
 - Student registration + verification flow
 - Letter templates (DOCX) with `{{placeholder}}` detection and validation
-- Letter lifecycle: draft → submitted → forwarded → approved/rejected
+- Letter lifecycle: draft -> submitted -> forwarded -> approved -> signed/rejected
 - PDF previews generated from DOCX using LibreOffice (headless)
 - Attachment uploads and requirements per letter type
 - Notifications via Firebase Cloud Messaging (FCM)

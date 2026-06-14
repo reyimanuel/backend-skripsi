@@ -98,6 +98,7 @@ type Student struct {
 	NIM                     string `gorm:"size:20;uniqueIndex;not null"`
 	ProgramStudi            string `gorm:"size:100;not null"`
 	Angkatan                int
+	SemesterMasukKuliah     string `gorm:"column:semester_masuk_kuliah;size:10"`
 	KredensialPath          string `gorm:"size:255"` // path to uploaded credential (KTM/KRS)
 	AdminVerificationStatus string `gorm:"size:20;not null;default:pending;index"`
 	AdminVerifiedBy         *uint  `gorm:"index"`
@@ -133,7 +134,7 @@ type Letter struct {
 	Payload datatypes.JSON `gorm:"type:jsonb;not null"`
 
 	Status string `gorm:"size:30;not null"`
-	// draft, submitted, verified, signed, rejected
+	// draft, submitted, forwarded, approved, signed, rejected
 
 	SignedByID *uint
 	SignedBy   *Official `gorm:"foreignKey:SignedByID"`

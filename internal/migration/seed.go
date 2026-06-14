@@ -354,6 +354,7 @@ func ensureStudent(tx *gorm.DB, users *seededUsers, now time.Time) error {
 			NIM:                     "210123456",
 			ProgramStudi:            "Teknik Informatika",
 			Angkatan:                2021,
+			SemesterMasukKuliah:     "Ganjil",
 			AdminVerificationStatus: "approved",
 			AdminVerifiedBy:         &adminID,
 			AdminVerifiedAt:         &now,
@@ -361,7 +362,21 @@ func ensureStudent(tx *gorm.DB, users *seededUsers, now time.Time) error {
 		}
 		return tx.Create(&s).Error
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	adminID := users.Admin.ID
+	return tx.Model(&s).Updates(map[string]any{
+		"nim":                       "210123456",
+		"program_studi":             "Teknik Informatika",
+		"angkatan":                  2021,
+		"semester_masuk_kuliah":     "Ganjil",
+		"admin_verification_status": "approved",
+		"admin_verified_by":         &adminID,
+		"admin_verified_at":         &now,
+		"rejection_reason":          "",
+	}).Error
 }
 
 func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) error {

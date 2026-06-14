@@ -3,6 +3,7 @@ package helpers
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"image"
@@ -274,6 +275,7 @@ type TemplatePlaceholderAnalysis struct {
 func ClassifyTemplatePlaceholders(placeholders []string) TemplatePlaceholderAnalysis {
 	keys := make([]string, 0, len(placeholders))
 	seen := make(map[string]struct{}, len(placeholders))
+	optionalGroups := make([]string, 0)
 	for _, raw := range placeholders {
 		k := strings.TrimSpace(raw)
 		if k == "" {
@@ -284,6 +286,12 @@ func ClassifyTemplatePlaceholders(placeholders []string) TemplatePlaceholderAnal
 		}
 		seen[k] = struct{}{}
 		keys = append(keys, k)
+		if IsTemplateOptionalMarkerKey(k) {
+			group := strings.TrimPrefix(k, "optional_")
+			if group != "" {
+				optionalGroups = append(optionalGroups, group)
+			}
+		}
 	}
 	sort.Strings(keys)
 
@@ -293,6 +301,9 @@ func ClassifyTemplatePlaceholders(placeholders []string) TemplatePlaceholderAnal
 	unknown := make([]string, 0)
 
 	for _, k := range keys {
+		if IsTemplateOptionalMarkerKey(k) || IsTemplateImagePlaceholderKey(k) || isTemplateOptionalPayloadKey(k, optionalGroups) {
+			continue
+		}
 		if _, ok := autoMap[k]; ok {
 			auto = append(auto, k)
 			continue
@@ -308,24 +319,43 @@ func ClassifyTemplatePlaceholders(placeholders []string) TemplatePlaceholderAnal
 	}
 }
 
+func IsTemplateOptionalMarkerKey(key string) bool {
+	return strings.HasPrefix(strings.TrimSpace(key), "optional_")
+}
+
+func IsTemplateImagePlaceholderKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return key == "logo_perusahaan" || strings.HasPrefix(key, "logo_") || strings.HasSuffix(key, "_logo")
+}
+
+func isTemplateOptionalPayloadKey(key string, optionalGroups []string) bool {
+	for _, group := range optionalGroups {
+		if group != "" && strings.Contains(key, group) {
+			return true
+		}
+	}
+	return false
+}
+
 func templateAutoFilledKeys() map[string]struct{} {
 	// Keys that the system already fills automatically when generating letters.
 	// See buildTemplateData() and buildApprovedPayload() in correspondence service.
 	return map[string]struct{}{
-		"mahasiswa":     {},
-		"nim":           {},
-		"program_studi": {},
-		"angkatan":      {},
-		"tanggal":       {},
-		"tahun_ajaran":  {},
-		"nomor_surat":   {},
-		"official":      {},
-		"nip":           {},
-		"pangkat":       {},
-		"jabatan":       {},
-		"ttd":           {},
-		"tanda_tangan":  {},
-		"signature":     {},
+		"mahasiswa":             {},
+		"tabel_data_mahasiswa":  {},
+		"nim":                   {},
+		"program_studi":         {},
+		"angkatan":              {},
+		"semester_masuk_kuliah": {},
+		"tahun_ajaran":          {},
+		"nomor_surat":           {},
+		"official":              {},
+		"nip":                   {},
+		"pangkat":               {},
+		"jabatan":               {},
+		"ttd":                   {},
+		"tanda_tangan":          {},
+		"signature":             {},
 	}
 }
 
@@ -448,8 +478,12 @@ func normalizeDocxPlaceholders(xmlContent string) string {
 	return re.ReplaceAllStringFunc(xmlContent, func(match string) string {
 		// Strip all XML tags and extra whitespace from inside the placeholder.
 		clean := xmlTagRe.ReplaceAllString(match, "")
-		clean = strings.Join(strings.Fields(clean), "")
-		return clean
+		key := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(clean, "{{"), "}}"))
+		key = strings.Join(strings.Fields(key), "_")
+		if key == "" {
+			return "{{}}"
+		}
+		return "{{" + key + "}}"
 	})
 }
 
@@ -460,6 +494,7 @@ func escapeXMLText(s string) string {
 }
 
 const docxImageDirectivePrefix = "__DOCX_IMAGE__:"
+const docxStudentTableDirectivePrefix = "__DOCX_STUDENT_TABLE__:"
 
 // DocxImage marks a stored server path (usually under public/...) as an image
 // that should be embedded into the generated DOCX when used as a placeholder value.
@@ -470,6 +505,31 @@ func DocxImage(storedPath string) string {
 		return ""
 	}
 	return docxImageDirectivePrefix + p
+}
+
+type DocxStudentTableRow struct {
+	Name string `json:"name"`
+	NIM  string `json:"nim"`
+}
+
+func DocxStudentTable(rows []DocxStudentTableRow) string {
+	cleaned := make([]DocxStudentTableRow, 0, len(rows))
+	for _, row := range rows {
+		name := strings.TrimSpace(row.Name)
+		nim := strings.TrimSpace(row.NIM)
+		if name == "" && nim == "" {
+			continue
+		}
+		cleaned = append(cleaned, DocxStudentTableRow{Name: name, NIM: nim})
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(cleaned)
+	if err != nil {
+		return ""
+	}
+	return docxStudentTableDirectivePrefix + string(payload)
 }
 
 type docxImageSpec struct {
@@ -720,6 +780,157 @@ func replaceDocxPlaceholderWithDrawing(xmlContent string, key string, drawingXML
 // {{key}} placeholders with the corresponding values from data.
 // It works by treating the docx as a ZIP archive and doing string replacement
 // directly on word/document.xml — no external license required.
+func optionalGroupHasValue(data map[string]string, markerKey string) bool {
+	markerValue := strings.TrimSpace(data[markerKey])
+	if markerValue != "" && markerValue != "0" && !strings.EqualFold(markerValue, "false") {
+		return true
+	}
+
+	group := strings.TrimPrefix(markerKey, "optional_")
+	if group == "" {
+		return false
+	}
+	for key, value := range data {
+		if key == markerKey {
+			continue
+		}
+		if strings.Contains(key, group) && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func applyOptionalDocxRows(xmlContent string, data map[string]string) string {
+	if !strings.Contains(xmlContent, "{{optional_") {
+		return xmlContent
+	}
+
+	rowRe := regexp.MustCompile(`(?s)<w:tr\b[^>]*>.*?</w:tr>`)
+	markerRe := regexp.MustCompile(`\{\{(optional_[a-zA-Z0-9_]+)\}\}`)
+	placeholderRe := regexp.MustCompile(`\{\{([a-zA-Z0-9_]+)\}\}`)
+
+	rowHasGroupPayload := func(row string, markerKey string) bool {
+		group := strings.TrimPrefix(markerKey, "optional_")
+		for _, placeholder := range placeholderRe.FindAllStringSubmatch(row, -1) {
+			if len(placeholder) < 2 {
+				continue
+			}
+			key := placeholder[1]
+			if key != markerKey && group != "" && strings.Contains(key, group) {
+				return true
+			}
+		}
+		return false
+	}
+
+	indexes := rowRe.FindAllStringIndex(xmlContent, -1)
+	if len(indexes) == 0 {
+		return xmlContent
+	}
+
+	var b strings.Builder
+	b.Grow(len(xmlContent))
+	last := 0
+	skipNextRow := false
+	for _, idx := range indexes {
+		b.WriteString(xmlContent[last:idx[0]])
+		row := xmlContent[idx[0]:idx[1]]
+		last = idx[1]
+
+		if skipNextRow {
+			skipNextRow = false
+			continue
+		}
+
+		matches := markerRe.FindAllStringSubmatch(row, -1)
+		if len(matches) == 0 {
+			b.WriteString(row)
+			continue
+		}
+
+		keepRow := true
+		markerOnlyRow := true
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			if !optionalGroupHasValue(data, match[1]) {
+				keepRow = false
+				if rowHasGroupPayload(row, match[1]) {
+					markerOnlyRow = false
+				}
+				break
+			}
+			row = strings.ReplaceAll(row, "{{"+match[1]+"}}", "")
+		}
+		if keepRow {
+			b.WriteString(row)
+			continue
+		}
+		if markerOnlyRow {
+			skipNextRow = true
+		}
+	}
+	b.WriteString(xmlContent[last:])
+	return b.String()
+}
+
+func docxTableCellXML(text string, bold bool) string {
+	runPr := ""
+	if bold {
+		runPr = "<w:rPr><w:b/></w:rPr>"
+	}
+	return `<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr><w:p><w:r>` + runPr + `<w:t>` + escapeXMLText(text) + `</w:t></w:r></w:p></w:tc>`
+}
+
+func docxTableRowXML(cells ...string) string {
+	return "<w:tr>" + strings.Join(cells, "") + "</w:tr>"
+}
+
+func docxStudentTableXML(rows []DocxStudentTableRow) string {
+	var b strings.Builder
+	b.WriteString(`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders></w:tblPr>`)
+	b.WriteString(docxTableRowXML(
+		docxTableCellXML("No", true),
+		docxTableCellXML("Nama", true),
+		docxTableCellXML("NIM", true),
+	))
+	for idx, row := range rows {
+		b.WriteString(docxTableRowXML(
+			docxTableCellXML(fmt.Sprintf("%d", idx+1), false),
+			docxTableCellXML(row.Name, false),
+			docxTableCellXML(row.NIM, false),
+		))
+	}
+	b.WriteString("</w:tbl>")
+	return b.String()
+}
+
+func decodeDocxStudentTableDirective(value string) ([]DocxStudentTableRow, bool, error) {
+	if !strings.HasPrefix(value, docxStudentTableDirectivePrefix) {
+		return nil, false, nil
+	}
+	raw := strings.TrimPrefix(value, docxStudentTableDirectivePrefix)
+	var rows []DocxStudentTableRow
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		return nil, true, err
+	}
+	return rows, true, nil
+}
+
+func replaceDocxParagraphPlaceholderWithXML(xmlContent string, key string, replacementXML string) string {
+	token := "{{" + key + "}}"
+	if !strings.Contains(xmlContent, token) {
+		return xmlContent
+	}
+	paragraphRe := regexp.MustCompile(`(?s)<w:p\b[^>]*>.*?` + regexp.QuoteMeta(token) + `.*?</w:p>`)
+	if paragraphRe.MatchString(xmlContent) {
+		return paragraphRe.ReplaceAllString(xmlContent, replacementXML)
+	}
+	return strings.ReplaceAll(xmlContent, token, replacementXML)
+}
+
 func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 	r, err := zip.OpenReader(srcPath)
 	if err != nil {
@@ -746,7 +957,15 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 
 	// Collect image directives from data.
 	imageByKey := make(map[string]*docxImageSpec)
+	studentTableByKey := make(map[string]string)
 	for key, val := range data {
+		if rows, ok, err := decodeDocxStudentTableDirective(val); ok {
+			if err != nil {
+				return err
+			}
+			studentTableByKey[key] = docxStudentTableXML(rows)
+			continue
+		}
 		if !strings.HasPrefix(val, docxImageDirectivePrefix) {
 			continue
 		}
@@ -757,6 +976,11 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 		spec, err := loadDocxImageSpec(stored)
 		if err != nil {
 			return err
+		}
+		if IsTemplateImagePlaceholderKey(key) {
+			const threeCmEMU = 1080000
+			spec.cx = threeCmEMU
+			spec.cy = threeCmEMU
 		}
 		imageByKey[key] = spec
 		entries[spec.zipPath] = spec.data
@@ -795,6 +1019,11 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 			continue
 		}
 		s := normalizeDocxPlaceholders(string(content))
+		s = applyOptionalDocxRows(s, data)
+
+		for key, tableXML := range studentTableByKey {
+			s = replaceDocxParagraphPlaceholderWithXML(s, key, tableXML)
+		}
 
 		// First embed images (if any), then apply text replacements.
 		for key, spec := range imageByKey {
