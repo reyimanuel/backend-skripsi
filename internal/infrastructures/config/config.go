@@ -11,19 +11,19 @@ import (
 )
 
 type AppConfigurationMap struct {
-	Port                 int            // Port is the port number that the server will listen to.
-	IsProduction         bool           // IsProduction is a flag that indicates whether the application is running in production mode.
-	DbURI                string         // Database connection.
-	AccessTokenLifeTime  int64          // AccessTokenLifeTime is the lifetime of the access token in seconds.
-	RefreshTokenLifeTime int64          // RefreshTokenLifeTime is the lifetime of the refresh token in seconds.
-	PrivateKeyPath       string         // Path to the private key file.
-	PublicKeyPath        string         // Path to the public key file.
-	BaseURL              string         // BaseURL is the base URL of the application, used for generating absolute URLs.
-	SMTP                 SMTPConfig     // SMTP configuration
-	SendGrid             SendGridConfig // SendGrid configuration
-	EmailProvider        string         // Which email provider to use: "smtp" or any email provider
-	FrontEndURL          string         // FrontEndURL is the URL of the front-end application.
-	FirebaseCredentials  string         // Path to the Firebase credentials file.
+	Port                 int              // Port is the port number that the server will listen to.
+	IsProduction         bool             // IsProduction is a flag that indicates whether the application is running in production mode.
+	DbURI                string           // Database connection.
+	AccessTokenLifeTime  int64            // AccessTokenLifeTime is the lifetime of the access token in seconds.
+	RefreshTokenLifeTime int64            // RefreshTokenLifeTime is the lifetime of the refresh token in seconds.
+	PrivateKeyPath       string           // Path to the private key file.
+	PublicKeyPath        string           // Path to the public key file.
+	BaseURL              string           // BaseURL is the base URL of the application, used for generating absolute URLs.
+	SMTP                 SMTPConfig       // SMTP configuration
+	MailerSend           MailerSendConfig // MailerSend configuration
+	EmailProvider        string           // Which email provider to use: "smtp" or any email provider
+	FrontEndURL          string           // FrontEndURL is the URL of the front-end application.
+	FirebaseCredentials  string           // Path to the Firebase credentials file.
 }
 
 // SMTPConfig holds SMTP configuration.
@@ -43,8 +43,8 @@ type SMTPConfig struct {
 	SenderName  string
 }
 
-// SendGridConfig holds SendGrid configuration
-type SendGridConfig struct {
+// MailerSendConfig holds MailerSend configuration.
+type MailerSendConfig struct {
 	APIKey      string
 	SenderEmail string
 	SenderName  string
@@ -113,11 +113,11 @@ func Load() {
 		SenderName:  os.Getenv("SMTP_SENDER_NAME"),
 	}
 
-	// SendGrid Configuration
-	SendGrid := SendGridConfig{
-		APIKey:      os.Getenv("SENDGRID_API_KEY"),
-		SenderEmail: os.Getenv("SENDGRID_SENDER_EMAIL"),
-		SenderName:  os.Getenv("SENDGRID_SENDER_NAME"),
+	// MailerSend Configuration
+	MailerSend := MailerSendConfig{
+		APIKey:      os.Getenv("MAILERSEND_API_KEY"),
+		SenderEmail: os.Getenv("MAILERSEND_SENDER_EMAIL"),
+		SenderName:  os.Getenv("MAILERSEND_SENDER_NAME"),
 	}
 
 	// Email provider selection (default to SMTP for backward compatibility)
@@ -147,7 +147,7 @@ func Load() {
 		PublicKeyPath:        PublicKeyPath,
 		BaseURL:              BaseURL,
 		SMTP:                 SMTP,
-		SendGrid:             SendGrid,
+		MailerSend:           MailerSend,
 		EmailProvider:        EmailProvider,
 		FrontEndURL:          FrontEndURL,
 		FirebaseCredentials:  FirebaseCredentials,
@@ -164,7 +164,7 @@ func Load() {
 		PublicKeyPath:        PublicKeyPath,
 		BaseURL:              BaseURL,
 		SMTP:                 SMTP,
-		SendGrid:             SendGrid,
+		MailerSend:           MailerSend,
 		EmailProvider:        EmailProvider,
 		FrontEndURL:          FrontEndURL,
 		FirebaseCredentials:  FirebaseCredentials,

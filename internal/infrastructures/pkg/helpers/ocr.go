@@ -445,7 +445,7 @@ func inferNameFromTextCandidates(text, currentName string) string {
 		"UNIVERSITAS": {}, "FAKULTAS": {}, "TEKNIK": {}, "KARTU": {}, "RENCANA": {},
 		"STUDI": {}, "SEMESTER": {}, "GENAP": {}, "NAMA": {}, "MAHASISWA": {},
 		"NOMOR": {}, "INDUK": {}, "PROGRAM": {}, "ANGKATAN": {}, "PEMBIMBING": {},
-		"AKADEMIK": {}, "MENGETAHUI": {}, "MENYETUJUI": {}, "WAKIL": {}, "DEKAN": {},
+		"AKADEMIK": {}, "MENGETAHUI": {}, "MENYETUJUI": {}, "ATASAN": {},
 		"DOSEN": {}, "MANADO": {},
 	}
 

@@ -15,18 +15,6 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// RegisterStudentRequest is received as multipart/form-data.
-// kredensial (bukti gambar KTM/KRS) is handled separately via ctx.FormFile("kredensial").
-type RegisterStudentRequest struct {
-	Name                string `form:"name"          binding:"required,safehtml"`
-	NIM                 string `form:"nim"           binding:"required"`
-	Email               string `form:"email"         binding:"required,email"`
-	Password            string `form:"password"      binding:"required,strongpassword"`
-	ProgramStudi        string `form:"program_studi" binding:"required,safehtml"`
-	Angkatan            int    `form:"angkatan"      binding:"required"`
-	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
-}
-
 type Response struct {
 	StatusCode int    `json:"status_code"`
 	Message    string `json:"message"`
@@ -58,25 +46,6 @@ type PendingStudentResponse struct {
 type PendingStudentListData struct {
 	Items []PendingStudentResponse `json:"items"`
 	Meta  PaginationMeta           `json:"meta"`
-}
-
-// RegisterWithKRSRequest is received as multipart/form-data.
-// The KRS image is handled separately via ctx.FormFile("krs").
-type RegisterWithKRSRequest struct {
-	Email               string `form:"email"    binding:"required,email"`
-	Password            string `form:"password" binding:"required,strongpassword"`
-	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
-}
-
-// KRSPreviewResponse is returned after a successful KRS-based registration
-// so the student can confirm which data was extracted from their document.
-type KRSPreviewResponse struct {
-	UserID              uint   `json:"user_id"`
-	Name                string `json:"name"`
-	NIM                 string `json:"nim"`
-	ProgramStudi        string `json:"program_studi"`
-	Angkatan            int    `json:"angkatan"`
-	SemesterMasukKuliah string `json:"semester_masuk_kuliah"`
 }
 
 type UserListResponse struct {
@@ -123,15 +92,6 @@ type ApproveStudentRequest struct {
 	ProgramStudi        string `json:"program_studi,omitempty"`
 	Angkatan            *int   `json:"angkatan,omitempty"`
 	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
-}
-
-type VerifyEmailRequest struct {
-	Email string `json:"email" binding:"required,email"`
-	Code  string `json:"code" binding:"required,len=5,numeric"`
-}
-
-type ResendVerificationRequest struct {
-	Email string `json:"email" binding:"required,email"`
 }
 
 type CreateStudentInvitationRequest struct {
@@ -187,7 +147,7 @@ type MeResponse struct {
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
 	RejectionReason         string     `json:"rejection_reason,omitempty"`
 
-	// Official fields (only for DEKAN/WAKIL_DEKAN)
+	// Official fields (only for official roles)
 	OfficialID *uint  `json:"official_id,omitempty"`
 	NIP        string `json:"nip,omitempty"`
 	Pangkat    string `json:"pangkat,omitempty"`
@@ -199,7 +159,8 @@ type MeResponse struct {
 type CreateStaffRequest struct {
 	Name     string `form:"name" binding:"required,safehtml"`
 	Email    string `form:"email" binding:"required,email"`
-	RoleCode string `form:"role_code" binding:"required,oneof=ADMIN DEKAN WAKIL_DEKAN"`
+	RoleCode string `form:"role_code" binding:"required,oneof=ADMIN ATASAN"`
+	Jabatan  string `form:"jabatan"`
 }
 
 type CompleteStaffInvitationRequest struct {

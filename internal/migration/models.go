@@ -114,10 +114,12 @@ type Student struct {
 }
 
 type LetterType struct {
-	ID          uint   `gorm:"primaryKey"`
-	Code        string `gorm:"size:50;uniqueIndex;not null"`
-	Name        string `gorm:"size:100;not null"`
-	Description string `gorm:"type:text"`
+	ID                 uint   `gorm:"primaryKey"`
+	Code               string `gorm:"size:50;uniqueIndex;not null"`
+	Name               string `gorm:"size:100;not null"`
+	Description        string `gorm:"type:text"`
+	WorkCode           string `gorm:"column:kode_kerja;size:50"`
+	ClassificationCode string `gorm:"column:kode_klasifikasi;size:50"`
 
 	AttachmentRequirements datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'"`
 

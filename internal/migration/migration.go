@@ -179,6 +179,39 @@ func runVerificationRefactorMigration(db *gorm.DB) error {
 		fmt.Printf("⚠️  could not backfill admin officials: %v\n", err)
 	}
 
+	// Backfill the single ATASAN access role for legacy official-role accounts.
+	if err := db.Exec(`
+		DO $$
+		DECLARE
+			atasan_role_id BIGINT;
+		BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'roles')
+			   AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_roles') THEN
+				INSERT INTO roles (code, name)
+				SELECT 'ATASAN', 'Atasan'
+				WHERE NOT EXISTS (SELECT 1 FROM roles WHERE code = 'ATASAN');
+
+				SELECT id INTO atasan_role_id FROM roles WHERE code = 'ATASAN' LIMIT 1;
+
+				IF atasan_role_id IS NOT NULL THEN
+					INSERT INTO user_roles (user_id, role_id)
+					SELECT DISTINCT ur.user_id, atasan_role_id
+					FROM user_roles ur
+					JOIN roles r ON r.id = ur.role_id
+					WHERE r.code IN ('KOPRODI', 'KABAG', 'KAJUR')
+					  AND NOT EXISTS (
+						  SELECT 1
+						  FROM user_roles existing
+						  WHERE existing.user_id = ur.user_id
+						    AND existing.role_id = atasan_role_id
+					  );
+				END IF;
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		fmt.Printf("could not backfill ATASAN role: %v\n", err)
+	}
+
 	return nil
 }
 

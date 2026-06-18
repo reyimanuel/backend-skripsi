@@ -115,6 +115,14 @@ func findAnyDocxTemplatePath() (string, error) {
 	return "", fmt.Errorf("no .docx template found; tried: %s", strings.Join(tried, ", "))
 }
 
+func maybeFindAnyDocxTemplatePath() string {
+	path, err := findAnyDocxTemplatePath()
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
 // SeedSelected allows seeding specific datasets (e.g. only users) and can be
 // run without requiring templates unless Templates=true.
 //
@@ -219,9 +227,9 @@ func SeedSelected(db *gorm.DB, force bool, targets SeedTargets) error {
 			if len(letterTypes) == 0 {
 				return fmt.Errorf("templates seeding requires letter types")
 			}
-			templateDocxPath, err := findAnyDocxTemplatePath()
-			if err != nil {
-				return err
+			templateDocxPath := maybeFindAnyDocxTemplatePath()
+			if templateDocxPath == "" {
+				return nil
 			}
 			if err := ensureTemplates(tx, letterTypes, templateDocxPath, users.Admin.ID); err != nil {
 				return err
@@ -240,18 +248,22 @@ func Seed(db *gorm.DB, force bool) error {
 }
 
 type seededUsers struct {
-	Admin     *User
-	Dekan     *User
-	Wakil     *User
-	Mahasiswa *User
+	Admin       *User
+	Dekan       *User
+	WakilDekan1 *User
+	WakilDekan2 *User
+	WakilDekan3 *User
+	Koprodi     *User
+	Kabag       *User
+	Kajur       *User
+	Mahasiswa   *User
 }
 
 func ensureRoles(tx *gorm.DB) (map[string]*Role, error) {
 	desired := []Role{
 		{Code: "MAHASISWA", Name: "Mahasiswa"},
 		{Code: "ADMIN", Name: "Administrator"},
-		{Code: "WAKIL_DEKAN", Name: "Wakil Dekan"},
-		{Code: "DEKAN", Name: "Dekan"},
+		{Code: "ATASAN", Name: "Atasan"},
 	}
 
 	roleMap := make(map[string]*Role, len(desired))
@@ -281,11 +293,31 @@ func ensureUsers(tx *gorm.DB, roleMap map[string]*Role, photoPath string, now ti
 	if err != nil {
 		return nil, err
 	}
-	dekan, err := ensureUser(tx, "dekan@kampus.ac.id", "Prof. Dr. Dekan", defaultPasswordHash, roleMap["DEKAN"], photoPath, now)
+	dekan, err := ensureUser(tx, "dekan@kampus.ac.id", "Dekan Fakultas", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
 	if err != nil {
 		return nil, err
 	}
-	wakil, err := ensureUser(tx, "wakildekan@kampus.ac.id", "Dr. Wakil Dekan", defaultPasswordHash, roleMap["WAKIL_DEKAN"], photoPath, now)
+	wakilDekan1, err := ensureUser(tx, "wakil.dekan1@kampus.ac.id", "Wakil Dekan 1", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
+	if err != nil {
+		return nil, err
+	}
+	wakilDekan2, err := ensureUser(tx, "wakil.dekan2@kampus.ac.id", "Wakil Dekan 2", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
+	if err != nil {
+		return nil, err
+	}
+	wakilDekan3, err := ensureUser(tx, "wakil.dekan3@kampus.ac.id", "Wakil Dekan 3", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
+	if err != nil {
+		return nil, err
+	}
+	koprodi, err := ensureUser(tx, "koprodi@kampus.ac.id", "Koordinator Program Studi", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
+	if err != nil {
+		return nil, err
+	}
+	kabag, err := ensureUser(tx, "kabag@kampus.ac.id", "Kepala Bagian", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
+	if err != nil {
+		return nil, err
+	}
+	kajur, err := ensureUser(tx, "kajur@kampus.ac.id", "Ketua Jurusan", defaultPasswordHash, roleMap["ATASAN"], photoPath, now)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +326,17 @@ func ensureUsers(tx *gorm.DB, roleMap map[string]*Role, photoPath string, now ti
 		return nil, err
 	}
 
-	return &seededUsers{Admin: admin, Dekan: dekan, Wakil: wakil, Mahasiswa: mahasiswa}, nil
+	return &seededUsers{
+		Admin:       admin,
+		Dekan:       dekan,
+		WakilDekan1: wakilDekan1,
+		WakilDekan2: wakilDekan2,
+		WakilDekan3: wakilDekan3,
+		Koprodi:     koprodi,
+		Kabag:       kabag,
+		Kajur:       kajur,
+		Mahasiswa:   mahasiswa,
+	}, nil
 }
 
 func ensureUser(tx *gorm.DB, email, name, passwordHash string, role *Role, photoPath string, now time.Time) (*User, error) {
@@ -380,8 +422,16 @@ func ensureStudent(tx *gorm.DB, users *seededUsers, now time.Time) error {
 }
 
 func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) error {
-	if users == nil || users.Admin == nil || users.Dekan == nil || users.Wakil == nil {
-		return fmt.Errorf("officials seeding requires admin/dekan/wakil users")
+	if users == nil ||
+		users.Admin == nil ||
+		users.Dekan == nil ||
+		users.WakilDekan1 == nil ||
+		users.WakilDekan2 == nil ||
+		users.WakilDekan3 == nil ||
+		users.Koprodi == nil ||
+		users.Kabag == nil ||
+		users.Kajur == nil {
+		return fmt.Errorf("officials seeding requires admin and all seeded atasan users")
 	}
 
 	officials := []Official{
@@ -394,10 +444,50 @@ func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) erro
 			IsOnDuty:  true,
 		},
 		{
-			UserID:    users.Wakil.ID,
+			UserID:    users.WakilDekan1.ID,
 			NIP:       "197001011995031002",
 			Pangkat:   "Pembina",
-			Jabatan:   "Wakil Dekan",
+			Jabatan:   "Wakil Dekan 1",
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		},
+		{
+			UserID:    users.WakilDekan2.ID,
+			NIP:       "197202021997031003",
+			Pangkat:   "Pembina",
+			Jabatan:   "Wakil Dekan 2",
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		},
+		{
+			UserID:    users.WakilDekan3.ID,
+			NIP:       "197303031998031004",
+			Pangkat:   "Pembina",
+			Jabatan:   "Wakil Dekan 3",
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		},
+		{
+			UserID:    users.Koprodi.ID,
+			NIP:       "198404042010121001",
+			Pangkat:   "Penata",
+			Jabatan:   "Koprodi",
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		},
+		{
+			UserID:    users.Kabag.ID,
+			NIP:       "198505052011121002",
+			Pangkat:   "Penata",
+			Jabatan:   "Kabag",
+			Signature: signaturePath,
+			IsOnDuty:  true,
+		},
+		{
+			UserID:    users.Kajur.ID,
+			NIP:       "198606062012121003",
+			Pangkat:   "Penata",
+			Jabatan:   "Kajur",
 			Signature: signaturePath,
 			IsOnDuty:  true,
 		},
@@ -440,9 +530,11 @@ func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) erro
 func ensureLetterTypes(tx *gorm.DB) ([]LetterType, error) {
 	desired := []LetterType{
 		{
-			Code:        "SURAT_AKTIF",
-			Name:        "Surat Keterangan Aktif Kuliah",
-			Description: "Digunakan untuk keperluan administrasi mahasiswa",
+			Code:               "SURAT_AKTIF",
+			Name:               "Surat Keterangan Aktif Kuliah",
+			Description:        "Digunakan untuk keperluan administrasi mahasiswa",
+			WorkCode:           "1",
+			ClassificationCode: "KM",
 		},
 	}
 
@@ -458,7 +550,12 @@ func ensureLetterTypes(tx *gorm.DB) ([]LetterType, error) {
 		} else if err != nil {
 			return nil, err
 		} else {
-			if err := tx.Model(&existing).Updates(map[string]any{"name": lt.Name, "description": lt.Description}).Error; err != nil {
+			if err := tx.Model(&existing).Updates(map[string]any{
+				"name":             lt.Name,
+				"description":      lt.Description,
+				"kode_kerja":       lt.WorkCode,
+				"kode_klasifikasi": lt.ClassificationCode,
+			}).Error; err != nil {
 				return nil, err
 			}
 		}

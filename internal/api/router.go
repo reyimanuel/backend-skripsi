@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/reyimanuel/letter-administration/internal/api/correspondence"
+	"github.com/reyimanuel/letter-administration/internal/api/events"
 	"github.com/reyimanuel/letter-administration/internal/api/letters"
 	"github.com/reyimanuel/letter-administration/internal/api/notifications"
 	user "github.com/reyimanuel/letter-administration/internal/api/users"
@@ -19,6 +20,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 	api := r.Group("/api")
 
 	user.RegisterRoutes(api.Group("/users"), db)
+	events.RegisterRoutes(api.Group("/events"))
 
 	protected := api.Group("/")
 	protected.Use(middleware.MiddlewareAuth)

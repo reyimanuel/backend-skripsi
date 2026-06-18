@@ -79,29 +79,6 @@ func (h *Handler) Logout(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) RegisterStudent(ctx *gin.Context) {
-	var payload RegisterStudentRequest
-	if err := ctx.ShouldBind(&payload); err != nil {
-		log.Printf("error binding register payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("Data pendaftaran tidak valid. Periksa kembali form yang diisi"))
-		return
-	}
-
-	file, err := ctx.FormFile("kredensial")
-	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("File kredensial wajib dilampirkan"))
-		return
-	}
-
-	response, err := h.Service.RegisterStudent(&payload, file)
-	if err != nil {
-		errs.HandlerError(ctx, err)
-		return
-	}
-
-	ctx.JSON(response.StatusCode, response)
-}
-
 func (h *Handler) GetMe(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
@@ -162,38 +139,6 @@ func (h *Handler) DeleteFCMToken(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) VerifyEmail(ctx *gin.Context) {
-	var req VerifyEmailRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("Email dan kode verifikasi 5 digit wajib diisi dengan benar"))
-		return
-	}
-
-	response, err := h.Service.VerifyEmail(req)
-	if err != nil {
-		errs.HandlerError(ctx, err)
-		return
-	}
-
-	ctx.JSON(response.StatusCode, response)
-}
-
-func (h *Handler) ResendVerificationEmail(ctx *gin.Context) {
-	var req ResendVerificationRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("Email untuk kirim ulang verifikasi tidak valid"))
-		return
-	}
-
-	response, err := h.Service.ResendVerificationEmail(req)
-	if err != nil {
-		errs.HandlerError(ctx, err)
-		return
-	}
-
-	ctx.JSON(response.StatusCode, response)
-}
-
 func (h *Handler) CreateStudentInvitation(ctx *gin.Context) {
 	adminID, err := middleware.GetUserID(ctx)
 	if err != nil {
@@ -231,6 +176,28 @@ func (h *Handler) BulkImportStudentInvitations(ctx *gin.Context) {
 	}
 
 	response, err := h.Service.BulkImportStudentInvitations(adminID, file)
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
+func (h *Handler) ResendInvitation(ctx *gin.Context) {
+	adminID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		errs.HandlerError(ctx, errs.Unauthorized("user tidak terautentikasi"))
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		errs.HandlerError(ctx, errs.BadRequest("ID user tidak valid"))
+		return
+	}
+
+	response, err := h.Service.ResendInvitation(adminID, uint(id))
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -454,29 +421,6 @@ func (h *Handler) AdminDeleteUser(ctx *gin.Context) {
 	}
 
 	response, err := h.Service.AdminDeleteUser(uint(id))
-	if err != nil {
-		errs.HandlerError(ctx, err)
-		return
-	}
-
-	ctx.JSON(response.StatusCode, response)
-}
-
-func (h *Handler) RegisterWithKRS(ctx *gin.Context) {
-	var payload RegisterWithKRSRequest
-	if err := ctx.ShouldBind(&payload); err != nil {
-		log.Printf("error binding krs registration payload: %v", err)
-		errs.HandlerError(ctx, errs.BadRequest("Data pendaftaran KRS tidak valid. Periksa email dan password"))
-		return
-	}
-
-	file, err := ctx.FormFile("krs")
-	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("File KRS wajib dilampirkan"))
-		return
-	}
-
-	response, err := h.Service.RegisterWithKRS(&payload, file)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return

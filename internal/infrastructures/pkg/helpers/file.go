@@ -348,6 +348,10 @@ func templateAutoFilledKeys() map[string]struct{} {
 		"angkatan":              {},
 		"semester_masuk_kuliah": {},
 		"tahun_ajaran":          {},
+		"hari":                  {},
+		"tanggal":               {},
+		"bulan":                 {},
+		"tahun":                 {},
 		"nomor_surat":           {},
 		"official":              {},
 		"nip":                   {},
@@ -464,11 +468,11 @@ func MissingPayloadKeys(payload map[string]any, requiredKeys []string) []string 
 }
 
 // normalizeDocxPlaceholders removes XML tags that Word inserts *inside*
-// {{key}} spans when it splits a run. For example Word may store {{dekan}} as:
+// {{key}} spans when it splits a run. For example Word may store {{atasan}} as:
 //
-//	<w:t>{{</w:t></w:r><w:r><w:t>dekan</w:t></w:r><w:r><w:t>}}</w:t>
+//	<w:t>{{</w:t></w:r><w:r><w:t>atasan</w:t></w:r><w:r><w:t>}}</w:t>
 //
-// This function collapses those fragments back into a plain {{dekan}} token
+// This function collapses those fragments back into a plain {{atasan}} token
 // so the subsequent strings.ReplaceAll can find and replace it.
 func normalizeDocxPlaceholders(xmlContent string) string {
 	// Match {{ ... }} where the interior may contain XML tags or whitespace.
@@ -491,6 +495,30 @@ func escapeXMLText(s string) string {
 	var buf bytes.Buffer
 	_ = xml.EscapeText(&buf, []byte(s))
 	return buf.String()
+}
+
+func preserveDocxTextBoundarySpaces(xmlContent string) string {
+	textRe := regexp.MustCompile(`(?s)<w:t\b([^>]*)>(.*?)</w:t>`)
+	return textRe.ReplaceAllStringFunc(xmlContent, func(match string) string {
+		parts := textRe.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+
+		attrs := parts[1]
+		text := parts[2]
+		if text == "" || strings.Contains(attrs, "xml:space=") {
+			return match
+		}
+		if !strings.HasPrefix(text, " ") &&
+			!strings.HasSuffix(text, " ") &&
+			!strings.HasPrefix(text, "\t") &&
+			!strings.HasSuffix(text, "\t") {
+			return match
+		}
+
+		return `<w:t` + attrs + ` xml:space="preserve">` + text + `</w:t>`
+	})
 }
 
 const docxImageDirectivePrefix = "__DOCX_IMAGE__:"
@@ -924,9 +952,29 @@ func replaceDocxParagraphPlaceholderWithXML(xmlContent string, key string, repla
 	if !strings.Contains(xmlContent, token) {
 		return xmlContent
 	}
-	paragraphRe := regexp.MustCompile(`(?s)<w:p\b[^>]*>.*?` + regexp.QuoteMeta(token) + `.*?</w:p>`)
-	if paragraphRe.MatchString(xmlContent) {
-		return paragraphRe.ReplaceAllString(xmlContent, replacementXML)
+
+	paragraphRe := regexp.MustCompile(`(?s)<w:p\b[^>]*>.*?</w:p>`)
+	indexes := paragraphRe.FindAllStringIndex(xmlContent, -1)
+	if len(indexes) > 0 {
+		var b strings.Builder
+		b.Grow(len(xmlContent) + len(replacementXML))
+		last := 0
+		replaced := false
+		for _, idx := range indexes {
+			b.WriteString(xmlContent[last:idx[0]])
+			paragraph := xmlContent[idx[0]:idx[1]]
+			if strings.Contains(paragraph, token) {
+				b.WriteString(replacementXML)
+				replaced = true
+			} else {
+				b.WriteString(paragraph)
+			}
+			last = idx[1]
+		}
+		b.WriteString(xmlContent[last:])
+		if replaced {
+			return b.String()
+		}
 	}
 	return strings.ReplaceAll(xmlContent, token, replacementXML)
 }
@@ -1056,8 +1104,9 @@ func FillTemplate(srcPath, dstPath string, data map[string]string) error {
 			if _, isImage := imageByKey[key]; isImage {
 				continue
 			}
-			s = strings.ReplaceAll(s, "{{"+key+"}}", escapeXMLText(val))
+			s = strings.ReplaceAll(s, "{{"+key+"}}", escapeXMLText(strings.TrimSpace(val)))
 		}
+		s = preserveDocxTextBoundarySpaces(s)
 		entries[name] = []byte(s)
 	}
 

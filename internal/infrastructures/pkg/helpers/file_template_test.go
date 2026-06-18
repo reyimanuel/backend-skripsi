@@ -273,3 +273,93 @@ func TestFillTemplate_ReplacesStudentTablePlaceholderWithGeneratedTable(t *testi
 		}
 	}
 }
+
+func TestFillTemplate_StudentTableReplacementKeepsPreviousParagraphs(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "template.docx")
+	dst := filepath.Join(tmpDir, "out.docx")
+
+	writeMinimalDocx(t, src, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:p><w:r><w:t>BERITA ACARA</w:t></w:r></w:p>
+		<w:p><w:r><w:t>Nomor: {{nomor_surat}}</w:t></w:r></w:p>
+		<w:p><w:r><w:t>Pada hari ini, {{hari_masuk_magang}} tanggal {{tanggal_masuk_magang}}, bertempat di {{tempat_magang}}, telah dilaksanakan penyerahan mahasiswa tersebut dibawah ini:</w:t></w:r></w:p>
+		<w:p><w:r><w:t>{{tabel_data_mahasiswa}}</w:t></w:r></w:p>
+		<w:p><w:r><w:t>Yang akan mengikuti Program Magang.</w:t></w:r></w:p>
+	</w:body>
+</w:document>`)
+
+	if err := FillTemplate(src, dst, map[string]string{
+		"nomor_surat":          "001",
+		"hari_masuk_magang":    "Senin",
+		"tanggal_masuk_magang": "15",
+		"tempat_magang":        "PT Contoh",
+		"tabel_data_mahasiswa": DocxStudentTable([]DocxStudentTableRow{
+			{Name: "Miracle", NIM: "220211060001"},
+		}),
+	}); err != nil {
+		t.Fatalf("FillTemplate: %v", err)
+	}
+
+	docXML := readDocxDocumentXML(t, dst)
+	for _, expected := range []string{
+		"BERITA ACARA",
+		"Nomor: 001",
+		"Pada hari ini, Senin tanggal 15, bertempat di PT Contoh, telah dilaksanakan penyerahan mahasiswa tersebut dibawah ini:",
+		"<w:tbl>",
+		"Miracle",
+		"Yang akan mengikuti Program Magang.",
+	} {
+		if !strings.Contains(docXML, expected) {
+			t.Fatalf("expected %q to remain in generated document: %s", expected, docXML)
+		}
+	}
+}
+
+func TestFillTemplate_PreservesSpacesAroundSplitPlaceholderRuns(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "template.docx")
+	dst := filepath.Join(tmpDir, "out.docx")
+
+	writeMinimalDocx(t, src, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:p>
+			<w:r><w:t>Pada hari ini, </w:t></w:r>
+			<w:r><w:t>{{hari_masuk_magang}}</w:t></w:r>
+			<w:r><w:t> tanggal </w:t></w:r>
+			<w:r><w:t>{{tanggal_masuk_magang}}</w:t></w:r>
+			<w:r><w:t> bulan </w:t></w:r>
+			<w:r><w:t>{{bulan_masuk_magang}}</w:t></w:r>
+			<w:r><w:t> tahun </w:t></w:r>
+			<w:r><w:t>{{tahun_masuk_magang}}</w:t></w:r>
+		</w:p>
+	</w:body>
+</w:document>`)
+
+	if err := FillTemplate(src, dst, map[string]string{
+		"hari_masuk_magang":    " Selasa ",
+		"tanggal_masuk_magang": " 3 ",
+		"bulan_masuk_magang":   " April ",
+		"tahun_masuk_magang":   " 1989 ",
+	}); err != nil {
+		t.Fatalf("FillTemplate: %v", err)
+	}
+
+	docXML := readDocxDocumentXML(t, dst)
+	for _, expected := range []string{
+		`<w:t xml:space="preserve">Pada hari ini, </w:t>`,
+		`<w:t>Selasa</w:t>`,
+		`<w:t xml:space="preserve"> tanggal </w:t>`,
+		`<w:t>3</w:t>`,
+		`<w:t xml:space="preserve"> bulan </w:t>`,
+		`<w:t>April</w:t>`,
+		`<w:t xml:space="preserve"> tahun </w:t>`,
+		`<w:t>1989</w:t>`,
+	} {
+		if !strings.Contains(docXML, expected) {
+			t.Fatalf("expected %q in generated document: %s", expected, docXML)
+		}
+	}
+}

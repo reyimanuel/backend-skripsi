@@ -1,12 +1,16 @@
 package helpers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
 	"net/smtp"
 	"strings"
 
@@ -19,7 +23,22 @@ func SendEmail(toEmail string, subject string, plainTextBody string) error {
 	if cfg == nil {
 		return fmt.Errorf("config not loaded")
 	}
-	smtpCfg := cfg.SMTP
+	provider := strings.ToLower(strings.TrimSpace(cfg.EmailProvider))
+	if provider == "" {
+		provider = "smtp"
+	}
+
+	switch provider {
+	case "smtp":
+		return sendViaSMTP(cfg.SMTP, toEmail, subject, plainTextBody)
+	case "mailersend":
+		return sendViaMailerSend(cfg.MailerSend, cfg.SMTP, toEmail, subject, plainTextBody)
+	default:
+		return fmt.Errorf("unsupported email provider %q", cfg.EmailProvider)
+	}
+}
+
+func sendViaSMTP(smtpCfg config.SMTPConfig, toEmail string, subject string, plainTextBody string) error {
 	if smtpCfg.Host == "" {
 		return fmt.Errorf("SMTP_HOST is not set")
 	}
@@ -27,10 +46,7 @@ func SendEmail(toEmail string, subject string, plainTextBody string) error {
 		return fmt.Errorf("SMTP_PORT is not set")
 	}
 
-	fromEmail := strings.TrimSpace(smtpCfg.SenderEmail)
-	if fromEmail == "" {
-		fromEmail = strings.TrimSpace(smtpCfg.User)
-	}
+	fromEmail := resolveFromEmail(smtpCfg.SenderEmail, smtpCfg.User)
 	if fromEmail == "" {
 		return fmt.Errorf("SMTP_SENDER_EMAIL is not set and SMTP_USER is empty")
 	}
@@ -39,7 +55,7 @@ func SendEmail(toEmail string, subject string, plainTextBody string) error {
 
 	client, isTLS, err := dialSMTPClient(smtpCfg.Host, smtpCfg.Port)
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp dial %s:%s: %w", smtpCfg.Host, smtpCfg.Port, err)
 	}
 	defer client.Close()
 
@@ -73,6 +89,73 @@ func SendEmail(toEmail string, subject string, plainTextBody string) error {
 	}
 
 	return client.Quit()
+}
+
+func sendViaMailerSend(mailerSendCfg config.MailerSendConfig, smtpCfg config.SMTPConfig, toEmail string, subject string, plainTextBody string) error {
+	if strings.TrimSpace(mailerSendCfg.APIKey) == "" {
+		return fmt.Errorf("MAILERSEND_API_KEY is not set")
+	}
+
+	fromEmail := resolveFromEmail(mailerSendCfg.SenderEmail, smtpCfg.SenderEmail)
+	if fromEmail == "" {
+		fromEmail = resolveFromEmail(smtpCfg.User, "")
+	}
+	if fromEmail == "" {
+		return fmt.Errorf("MAILERSEND_SENDER_EMAIL is not set and no fallback sender email is available")
+	}
+
+	fromName := strings.TrimSpace(mailerSendCfg.SenderName)
+	if fromName == "" {
+		fromName = strings.TrimSpace(smtpCfg.SenderName)
+	}
+
+	payload := map[string]any{
+		"from": map[string]string{
+			"email": fromEmail,
+			"name":  fromName,
+		},
+		"to": []map[string]string{{
+			"email": toEmail,
+		}},
+		"subject": subject,
+		"text":    plainTextBody,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://api.mailersend.com/v1/email", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(mailerSendCfg.APIKey))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: constants.EmailTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if len(responseBody) == 0 {
+			return fmt.Errorf("mailersend send failed: status %s", resp.Status)
+		}
+		return fmt.Errorf("mailersend send failed: status %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+
+	return nil
+}
+
+func resolveFromEmail(primary string, fallback string) string {
+	if value := strings.TrimSpace(primary); value != "" {
+		return value
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func buildPlainTextMessage(fromEmail string, toEmail string, subject string, plainTextBody string) string {

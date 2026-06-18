@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/middleware"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
@@ -151,6 +152,16 @@ func (h *Handler) ReviewLetter(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
+func (h *Handler) ListActiveOfficials(ctx *gin.Context) {
+	response, err := h.Service.ListActiveOfficials()
+	if err != nil {
+		errs.HandlerError(ctx, err)
+		return
+	}
+
+	ctx.JSON(response.StatusCode, response)
+}
+
 func (h *Handler) PreviewLetter(ctx *gin.Context) {
 	userID, err := middleware.GetUserID(ctx)
 	if err != nil {
@@ -178,7 +189,7 @@ func (h *Handler) PreviewLetter(ctx *gin.Context) {
 	}
 
 	isAdmin := slices.Contains(claims.Roles, "ADMIN")
-	isOfficial := slices.Contains(claims.Roles, "DEKAN") || slices.Contains(claims.Roles, "WAKIL_DEKAN")
+	isOfficial := hasOfficialClaimRole(claims.Roles)
 	pdfPath, fileName, err := h.Service.PreviewLetter(uint(letterID), userID, isAdmin, isOfficial)
 	if err != nil {
 		errs.HandlerError(ctx, err)
@@ -261,7 +272,7 @@ func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 	}
 
 	isAdmin := slices.Contains(claims.Roles, "ADMIN")
-	isOfficial := slices.Contains(claims.Roles, "DEKAN") || slices.Contains(claims.Roles, "WAKIL_DEKAN")
+	isOfficial := hasOfficialClaimRole(claims.Roles)
 	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, isAdmin, isOfficial)
 	if err != nil {
 		errs.HandlerError(ctx, err)
@@ -269,6 +280,15 @@ func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 	}
 
 	ctx.JSON(response.StatusCode, response)
+}
+
+func hasOfficialClaimRole(roles []string) bool {
+	for _, role := range roles {
+		if constants.IsOfficialRoleCode(role) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) ListLetters(ctx *gin.Context) {

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,9 +21,9 @@ import (
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/helpers"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
-	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"github.com/reyimanuel/letter-administration/internal/migration"
+	"github.com/reyimanuel/letter-administration/internal/realtime"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +31,10 @@ type Service struct {
 	Repo *Repository
 }
 
-const emailVerificationCodeTTL = 15 * time.Minute
+var (
+	staffNamePattern = regexp.MustCompile(`^[\p{L}\p{M}0-9 .,'-]{3,100}$`)
+	staffNIPPattern  = regexp.MustCompile(`^[0-9]{8,30}$`)
+)
 
 func NewService(repo *Repository) *Service {
 	return &Service{
@@ -135,96 +139,6 @@ func (s *Service) Logout(userID uint, req *LogoutRequest) (*Response, error) {
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Logout berhasil"}, nil
-}
-
-func (s *Service) RegisterStudent(payload *RegisterStudentRequest, file *multipart.FileHeader) (*Response, error) {
-	if _, err := s.Repo.GetByNIM(payload.NIM); err == nil {
-		return nil, errs.BadRequest("NIM sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking NIM uniqueness: err=%v", err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-
-	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
-		return nil, errs.BadRequest("Email sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking email uniqueness: err=%v", err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-
-	ext := strings.ToLower(filepath.Ext(file.Filename))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-		return nil, errs.BadRequest("file harus berupa gambar (jpg/jpeg/png)")
-	}
-	semesterMasukKuliah := normalizeSemesterMasukKuliah(payload.SemesterMasukKuliah)
-	if strings.TrimSpace(payload.SemesterMasukKuliah) != "" && semesterMasukKuliah == "" {
-		return nil, errs.BadRequest("semester masuk kuliah harus Ganjil atau Genap")
-	}
-
-	fileName := helpers.GenerateUniqueFileName(file.Filename)
-	filePath := filepath.Join("public", "images", "student-cards", fileName)
-	if err := helpers.SaveUploadedFile(file, filePath); err != nil {
-		log.Printf("error menyimpan file kredensial: %v", err)
-		return nil, errs.InternalServerError("gagal menyimpan file kredensial")
-	}
-
-	hashedPwd, err := helpers.HashPassword(payload.Password)
-	if err != nil {
-		os.Remove(filePath)
-		log.Printf("error hashing password: %v", err)
-		return nil, errs.InternalServerError("gagal memproses password")
-	}
-
-	mahasiswaRole, err := s.Repo.GetRoleByCode(s.Repo.DB, "MAHASISWA")
-	if err != nil {
-		os.Remove(filePath)
-		log.Printf("role MAHASISWA tidak ditemukan: %v", err)
-		return nil, errs.InternalServerError("konfigurasi akses tidak ditemukan")
-	}
-
-	user := &migration.User{
-		Name:     payload.Name,
-		Email:    payload.Email,
-		Password: hashedPwd,
-		Roles:    []migration.Role{*mahasiswaRole},
-		IsActive: true,
-	}
-	student := &migration.Student{
-		NIM:                     payload.NIM,
-		ProgramStudi:            payload.ProgramStudi,
-		Angkatan:                payload.Angkatan,
-		SemesterMasukKuliah:     semesterMasukKuliah,
-		KredensialPath:          filePath,
-		AdminVerificationStatus: "pending",
-	}
-
-	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
-		return s.Repo.CreateStudentWithUser(tx, user, student)
-	}); err != nil {
-		os.Remove(filePath)
-		log.Printf("error registering student: %v", err)
-		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
-	}
-
-	if err := s.issueEmailVerificationCode(context.Background(), user); err != nil {
-		log.Printf("error sending verification email: %v", err)
-	}
-
-	// Best-effort: notify admins about new pending registration.
-	ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
-	defer cancel()
-	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, payload.NIM), map[string]string{
-		"type":            "student_registered",
-		"student_user_id": fmt.Sprint(user.ID),
-		"nim":             strings.TrimSpace(payload.NIM),
-	}); err != nil {
-		log.Printf("push admin notify (student_registered) failed: user_id=%d err=%v", user.ID, err)
-	}
-
-	return &Response{
-		StatusCode: http.StatusCreated,
-		Message:    "Pendaftaran berhasil. Silakan verifikasi email lalu tunggu verifikasi admin.",
-	}, nil
 }
 
 func (s *Service) GetPendingStudents(page, pageSize int) (*Response, error) {
@@ -420,6 +334,8 @@ func (s *Service) AdminUpdateUser(userID uint, req AdminUpdateUserRequest) (*Res
 		return nil, errs.InternalServerError("gagal memperbarui user")
 	}
 
+	realtime.PublishTopics([]string{"users", "me"}, "user-updated", userID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "User berhasil diperbarui"}, nil
 }
 
@@ -468,6 +384,8 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 		log.Printf("error deleting user: %v", err)
 		return nil, errs.InternalServerError("gagal menghapus user")
 	}
+
+	realtime.Publish("users", "user-deleted", userID)
 
 	return &Response{StatusCode: http.StatusOK, Message: "User berhasil dihapus"}, nil
 }
@@ -547,6 +465,8 @@ func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStude
 		}
 	}
 
+	realtime.PublishTopics([]string{"users", "pending-students"}, "student-approved", studentID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "Mahasiswa berhasil disetujui oleh admin"}, nil
 }
 
@@ -567,6 +487,8 @@ func (s *Service) RejectStudent(studentID uint, adminID uint, reason string) (*R
 			return nil, errs.InternalServerError("gagal menghapus file kredensial mahasiswa")
 		}
 	}
+
+	realtime.PublishTopics([]string{"users", "pending-students"}, "student-rejected", studentID)
 
 	return &Response{
 		StatusCode: http.StatusOK,
@@ -591,7 +513,7 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 			isStudent = true
 			continue
 		}
-		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
+		if constants.IsOfficialRoleCode(role.Code) {
 			isOfficial = true
 		}
 	}
@@ -656,62 +578,6 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 	}
 
 	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diambil", Data: resp}, nil
-}
-
-func (s *Service) VerifyEmail(req VerifyEmailRequest) (*Response, error) {
-	email := strings.TrimSpace(req.Email)
-	code := strings.TrimSpace(req.Code)
-
-	usr, err := s.Repo.GetByEmail(email)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("User tidak ditemukan")
-		}
-		log.Printf("error fetching user for email verification: email=%q err=%v", email, err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-	if usr.EmailVerifiedAt != nil {
-		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
-	}
-	if strings.TrimSpace(usr.EmailVerificationCodeHash) == "" || usr.EmailVerificationExpiresAt == nil {
-		return nil, errs.BadRequest("Kode verifikasi belum tersedia. Silakan kirim ulang kode.")
-	}
-	if time.Now().After(*usr.EmailVerificationExpiresAt) {
-		return nil, errs.BadRequest("Kode verifikasi sudah kedaluwarsa. Silakan kirim ulang kode.")
-	}
-	if !helpers.CheckPasswordHash(code, usr.EmailVerificationCodeHash) {
-		return nil, errs.BadRequest("Kode verifikasi tidak valid")
-	}
-
-	now := time.Now()
-	if err := s.Repo.SetUserEmailVerified(s.Repo.DB, usr.ID, now); err != nil {
-		log.Printf("error verifying email for user %d: %v", usr.ID, err)
-		return nil, errs.InternalServerError("Gagal memverifikasi email")
-	}
-
-	return &Response{StatusCode: http.StatusOK, Message: "Email berhasil diverifikasi"}, nil
-}
-
-func (s *Service) ResendVerificationEmail(req ResendVerificationRequest) (*Response, error) {
-	usr, err := s.Repo.GetByEmail(strings.TrimSpace(req.Email))
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("User tidak ditemukan")
-		}
-		log.Printf("error fetching user for resend verification: email=%q err=%v", strings.TrimSpace(req.Email), err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-
-	if usr.EmailVerifiedAt != nil {
-		return &Response{StatusCode: http.StatusOK, Message: "Email sudah terverifikasi"}, nil
-	}
-
-	if err := s.issueEmailVerificationCode(context.Background(), usr); err != nil {
-		log.Printf("error resend verification email: %v", err)
-		return nil, errs.InternalServerError("Gagal mengirim ulang email verifikasi")
-	}
-
-	return &Response{StatusCode: http.StatusOK, Message: "Email verifikasi berhasil dikirim ulang"}, nil
 }
 
 func (s *Service) CreateStudentInvitation(adminID uint, req CreateStudentInvitationRequest) (*Response, error) {
@@ -801,6 +667,8 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 		return errs.InternalServerError("gagal membuat undangan mahasiswa")
 	}
 
+	realtime.Publish("users", "student-invitation-created", user.ID)
+
 	invitationToken, err := token.GenerateStudentInvitationToken(user.ID, user.Email, nim)
 	if err != nil {
 		log.Printf("error generating student invitation token: user_id=%d err=%v", user.ID, err)
@@ -815,6 +683,7 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	invitationLink := buildStudentInvitationLink(invitationToken)
 	if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), user.Email, user.Name, nim, inviterName, invitationLink); err != nil {
 		log.Printf("error sending student invitation email: user_id=%d err=%v", user.ID, err)
+		return invitationEmailError("mahasiswa", err)
 	}
 
 	return nil
@@ -931,6 +800,8 @@ func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest
 		return nil, err
 	}
 
+	realtime.PublishTopics([]string{"users", "pending-students"}, "student-invitation-completed", usr.ID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "Akun mahasiswa berhasil diaktifkan. Silakan login."}, nil
 }
 
@@ -939,14 +810,35 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 	if roleCode == "" {
 		return nil, errs.BadRequest("role wajib diisi")
 	}
+	if roleCode != "ADMIN" && roleCode != "ATASAN" {
+		return nil, errs.BadRequest("role staff tidak valid")
+	}
 
 	name := strings.TrimSpace(req.Name)
-	email := strings.TrimSpace(req.Email)
-	if name == "" {
-		return nil, errs.BadRequest("nama staff wajib diisi")
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if err := validateStaffName(name, "nama staff"); err != nil {
+		return nil, err
 	}
 	if email == "" {
 		return nil, errs.BadRequest("email staff wajib diisi")
+	}
+	if len(email) > 254 {
+		return nil, errs.BadRequest("email staff maksimal 254 karakter")
+	}
+	jabatan := strings.TrimSpace(req.Jabatan)
+	if roleCode == "ATASAN" && jabatan == "" {
+		return nil, errs.BadRequest("jabatan wajib diisi untuk role atasan")
+	}
+	if roleCode == "ATASAN" && jabatan != "" {
+		normalizedJabatan, ok := normalizeOfficialJabatan(jabatan)
+		if !ok {
+			return nil, errs.BadRequest("jabatan harus salah satu dari: Dekan, Wakil Dekan 1, Wakil Dekan 2, Wakil Dekan 3, Koprodi, Kabag, Kajur")
+		}
+		jabatan = normalizedJabatan
+	} else if jabatan != "" {
+		if err := validateStaffName(jabatan, "jabatan"); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := s.Repo.GetByEmail(email); err == nil {
@@ -965,13 +857,18 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 	role, err := s.Repo.GetRoleByCode(s.Repo.DB, roleCode)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.BadRequest("Role staff tidak ditemukan")
+			role = &migration.Role{Code: roleCode, Name: defaultStaffRoleName(roleCode)}
+			if createRoleErr := s.Repo.DB.Create(role).Error; createRoleErr != nil {
+				log.Printf("error creating missing staff role: role=%q err=%v", roleCode, createRoleErr)
+				return nil, errs.InternalServerError("Gagal menyiapkan role staff")
+			}
+		} else {
+			log.Printf("error fetching staff role: role=%q err=%v", roleCode, err)
+			return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 		}
-		log.Printf("error fetching staff role: role=%q err=%v", roleCode, err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
 	}
 
-	isOfficialRole := roleCode == "DEKAN" || roleCode == "WAKIL_DEKAN"
+	isOfficialRole := constants.IsOfficialRoleCode(roleCode)
 
 	roles := []migration.Role{*role}
 
@@ -994,7 +891,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 
 		official := &migration.Official{
 			UserID:   user.ID,
-			Jabatan:  defaultStaffJabatan(roleCode),
+			Jabatan:  jabatan,
 			IsOnDuty: true,
 		}
 
@@ -1004,6 +901,8 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 		log.Printf("error creating staff by admin %d: %v", adminID, createErr)
 		return nil, errs.InternalServerError("gagal membuat akun staff")
 	}
+
+	realtime.Publish("users", "staff-invitation-created", user.ID)
 
 	invitationToken, err := token.GenerateStaffInvitationToken(user.ID, user.Email, roleCode)
 	if err != nil {
@@ -1019,9 +918,93 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 	invitationLink := buildStaffInvitationLink(invitationToken)
 	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), user.Email, user.Name, inviterName, invitationLink); err != nil {
 		log.Printf("error sending staff invitation email: user_id=%d err=%v", user.ID, err)
+		return nil, invitationEmailError("staff", err)
 	}
 
 	return &Response{StatusCode: http.StatusCreated, Message: "Undangan aktivasi staff berhasil dikirim ke email pengguna."}, nil
+}
+
+func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error) {
+	usr, err := s.Repo.GetUserByID(s.Repo.DB, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("User tidak ditemukan")
+		}
+		log.Printf("error fetching user for resend invitation: user_id=%d err=%v", userID, err)
+		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
+	}
+	if usr.EmailVerifiedAt != nil {
+		return nil, errs.BadRequest("Akun sudah terverifikasi, link aktivasi tidak perlu dikirim ulang")
+	}
+
+	inviterName := "Admin"
+	if admin, err := s.Repo.GetUserByID(s.Repo.DB, adminID); err == nil && strings.TrimSpace(admin.Name) != "" {
+		inviterName = strings.TrimSpace(admin.Name)
+	}
+
+	roles := usr.RoleSlice()
+	if userHasRole(usr, "MAHASISWA") {
+		student, err := s.Repo.GetStudentByUserID(s.Repo.DB, usr.ID)
+		if err != nil {
+			return nil, errs.BadRequest("Data mahasiswa undangan tidak ditemukan")
+		}
+		tokenValue, err := token.GenerateStudentInvitationToken(usr.ID, usr.Email, student.NIM)
+		if err != nil {
+			log.Printf("error generating student invitation token: user_id=%d err=%v", usr.ID, err)
+			return nil, errs.InternalServerError("gagal membuat link aktivasi mahasiswa")
+		}
+		link := buildStudentInvitationLink(tokenValue)
+		if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, student.NIM, inviterName, link); err != nil {
+			log.Printf("error resending student invitation email: user_id=%d err=%v", usr.ID, err)
+			return nil, invitationEmailError("mahasiswa", err)
+		}
+		realtime.Publish("users", "student-invitation-resent", usr.ID)
+		return &Response{StatusCode: http.StatusOK, Message: "Link aktivasi mahasiswa berhasil dikirim ulang"}, nil
+	}
+
+	roleCode := ""
+	for _, role := range roles {
+		normalized := strings.ToUpper(strings.TrimSpace(role))
+		if normalized == "ADMIN" || constants.IsOfficialRoleCode(normalized) {
+			roleCode = normalized
+			break
+		}
+	}
+	if roleCode == "" {
+		return nil, errs.BadRequest("User tidak memiliki role yang dapat dikirim link aktivasi")
+	}
+
+	tokenValue, err := token.GenerateStaffInvitationToken(usr.ID, usr.Email, roleCode)
+	if err != nil {
+		log.Printf("error generating staff invitation token: user_id=%d err=%v", usr.ID, err)
+		return nil, errs.InternalServerError("gagal membuat link aktivasi staff")
+	}
+	link := buildStaffInvitationLink(tokenValue)
+	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, inviterName, link); err != nil {
+		log.Printf("error resending staff invitation email: user_id=%d err=%v", usr.ID, err)
+		return nil, invitationEmailError("staff", err)
+	}
+
+	realtime.Publish("users", "staff-invitation-resent", usr.ID)
+
+	return &Response{StatusCode: http.StatusOK, Message: "Link aktivasi staff berhasil dikirim ulang"}, nil
+}
+
+func validateStaffName(value string, label string) error {
+	if value == "" {
+		return errs.BadRequest(label + " wajib diisi")
+	}
+	if !staffNamePattern.MatchString(value) {
+		return errs.BadRequest(label + " harus 3-100 karakter dan hanya boleh berisi huruf, angka, spasi, titik, koma, apostrof, atau tanda hubung")
+	}
+	if !helpers.IsSafeHTML(value) {
+		return errs.BadRequest(label + " mengandung karakter tidak aman")
+	}
+	return nil
+}
+
+func invitationEmailError(kind string, err error) error {
+	return errs.BadRequest(fmt.Sprintf("Akun %s sudah dibuat, tetapi email undangan gagal dikirim. Periksa konfigurasi SMTP lalu gunakan tombol resend. Detail: %v", kind, err))
 }
 
 func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, signatureFile *multipart.FileHeader) (*Response, error) {
@@ -1055,14 +1038,25 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 	}
 
 	roleCode := strings.ToUpper(strings.TrimSpace(invitation.RoleCode))
-	isOfficialRole := roleCode == "DEKAN" || roleCode == "WAKIL_DEKAN"
+	isOfficialRole := constants.IsOfficialRoleCode(roleCode)
 	signaturePath := ""
 	if isOfficialRole {
-		if strings.TrimSpace(req.NIP) == "" {
+		nip := strings.TrimSpace(req.NIP)
+		if nip == "" {
 			return nil, errs.BadRequest("NIP wajib diisi")
 		}
-		if strings.TrimSpace(req.Jabatan) == "" {
-			req.Jabatan = defaultStaffJabatan(roleCode)
+		if !staffNIPPattern.MatchString(nip) {
+			return nil, errs.BadRequest("NIP harus 8-30 digit angka")
+		}
+		if strings.TrimSpace(req.Pangkat) != "" {
+			if err := validateStaffName(strings.TrimSpace(req.Pangkat), "pangkat"); err != nil {
+				return nil, err
+			}
+		}
+		if strings.TrimSpace(req.Jabatan) != "" {
+			if err := validateStaffName(strings.TrimSpace(req.Jabatan), "jabatan"); err != nil {
+				return nil, err
+			}
 		}
 		if signatureFile == nil {
 			return nil, errs.BadRequest("File tanda tangan wajib dilampirkan")
@@ -1086,6 +1080,24 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 	nip := strings.TrimSpace(req.NIP)
 	pangkat := strings.TrimSpace(req.Pangkat)
 	jabatan := strings.TrimSpace(req.Jabatan)
+	if isOfficialRole && jabatan != "" {
+		normalizedJabatan, ok := normalizeOfficialJabatan(jabatan)
+		if !ok {
+			if signaturePath != "" {
+				_ = os.Remove(signaturePath)
+			}
+			return nil, errs.BadRequest("jabatan harus salah satu dari: Dekan, Wakil Dekan 1, Wakil Dekan 2, Wakil Dekan 3, Koprodi, Kabag, Kajur")
+		}
+		jabatan = normalizedJabatan
+	}
+	if isOfficialRole && jabatan == "" {
+		if existingOfficial, err := s.Repo.GetOfficialByUserID(s.Repo.DB, usr.ID); err == nil && existingOfficial != nil {
+			jabatan = strings.TrimSpace(existingOfficial.Jabatan)
+		}
+		if jabatan == "" {
+			jabatan = defaultStaffJabatan(roleCode)
+		}
+	}
 	if len(nip) > 50 {
 		if signaturePath != "" {
 			_ = os.Remove(signaturePath)
@@ -1168,135 +1180,9 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 		return nil, err
 	}
 
+	realtime.PublishTopics([]string{"users", "me"}, "staff-invitation-completed", usr.ID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "Akun staff berhasil diaktifkan. Silakan login."}, nil
-}
-
-// RegisterWithKRS registers a new student by extracting their data automatically
-// from the uploaded KRS (Kartu Rencana Studi) image using Google Cloud Vision OCR.
-// The student only has to supply their email, password, and KRS image.
-func (s *Service) RegisterWithKRS(payload *RegisterWithKRSRequest, file *multipart.FileHeader) (*Response, error) {
-	// Validate file type
-	ext := strings.ToLower(filepath.Ext(file.Filename))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-		return nil, errs.BadRequest("file KRS harus berupa gambar (jpg/jpeg/png)")
-	}
-	semesterMasukKuliah := normalizeSemesterMasukKuliah(payload.SemesterMasukKuliah)
-	if strings.TrimSpace(payload.SemesterMasukKuliah) != "" && semesterMasukKuliah == "" {
-		return nil, errs.BadRequest("semester masuk kuliah harus Ganjil atau Genap")
-	}
-
-	// Check e-mail uniqueness early so we don't waste OCR quota
-	if _, err := s.Repo.GetByEmail(payload.Email); err == nil {
-		return nil, errs.BadRequest("Email sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("error checking KRS registration email uniqueness: err=%v", err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-
-	// Save the uploaded image
-	fileName := helpers.GenerateUniqueFileName(file.Filename)
-	filePath := filepath.Join("public", "images", "student-cards", fileName)
-	if err := helpers.SaveUploadedFile(file, filePath); err != nil {
-		log.Printf("error menyimpan file KRS: %v", err)
-		return nil, errs.InternalServerError("gagal menyimpan file KRS")
-	}
-
-	// Run OCR via local Tesseract engine
-	rawText, err := helpers.ExtractTextFromImage(filePath)
-	if err != nil {
-		os.Remove(filePath)
-		log.Printf("error OCR pada file %s: %v", filePath, err)
-		return nil, errs.InternalServerError("gagal memproses gambar KRS dengan OCR")
-	}
-
-	// OCR result logged only in debug mode to avoid leaking sensitive data
-	if len(rawText) > 0 {
-		log.Printf("OCR processing complete, text length: %d", len(rawText))
-	}
-	// Parse extracted text into structured student data
-	krsData, err := helpers.ParseKRSData(rawText)
-	if err != nil {
-		os.Remove(filePath)
-		return nil, errs.BadRequest(err.Error())
-	}
-
-	// Check NIM uniqueness
-	if _, err := s.Repo.GetByNIM(krsData.NIM); err == nil {
-		os.Remove(filePath)
-		return nil, errs.BadRequest("NIM sudah terdaftar")
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		os.Remove(filePath)
-		log.Printf("error checking KRS registration NIM uniqueness: err=%v", err)
-		return nil, errs.InternalServerError("Terjadi gangguan pada server. Silakan coba lagi.")
-	}
-
-	// Hash password
-	hashedPwd, err := helpers.HashPassword(payload.Password)
-	if err != nil {
-		os.Remove(filePath)
-		log.Printf("error hashing password: %v", err)
-		return nil, errs.InternalServerError("gagal memproses password")
-	}
-
-	// Fetch MAHASISWA role
-	mahasiswaRole, err := s.Repo.GetRoleByCode(s.Repo.DB, "MAHASISWA")
-	if err != nil {
-		os.Remove(filePath)
-		log.Printf("role MAHASISWA tidak ditemukan: %v", err)
-		return nil, errs.InternalServerError("konfigurasi akses tidak ditemukan")
-	}
-
-	user := &migration.User{
-		Name:     krsData.Name,
-		Email:    payload.Email,
-		Password: hashedPwd,
-		Roles:    []migration.Role{*mahasiswaRole},
-		IsActive: true,
-	}
-	student := &migration.Student{
-		NIM:                     krsData.NIM,
-		ProgramStudi:            krsData.ProgramStudi,
-		Angkatan:                krsData.Angkatan,
-		SemesterMasukKuliah:     semesterMasukKuliah,
-		KredensialPath:          filePath,
-		AdminVerificationStatus: "pending",
-	}
-
-	if err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
-		return s.Repo.CreateStudentWithUser(tx, user, student)
-	}); err != nil {
-		os.Remove(filePath)
-		log.Printf("error mendaftarkan mahasiswa via KRS: %v", err)
-		return nil, errs.InternalServerError("gagal mendaftarkan akun mahasiswa")
-	}
-
-	if err := s.issueEmailVerificationCode(context.Background(), user); err != nil {
-		log.Printf("error sending verification email: %v", err)
-	}
-
-	// Best-effort: notify admins about new pending registration.
-	ctx, cancel := context.WithTimeout(context.Background(), constants.ExternalServiceTimeout)
-	defer cancel()
-	if _, err := push.SendToRole(ctx, s.Repo.DB, "ADMIN", "Registrasi Mahasiswa Baru", fmt.Sprintf("%s mendaftar (NIM: %s)", user.Name, krsData.NIM), map[string]string{
-		"type":            "student_registered",
-		"student_user_id": fmt.Sprint(user.ID),
-		"nim":             strings.TrimSpace(krsData.NIM),
-	}); err != nil {
-		log.Printf("push admin notify (student_registered/krs) failed: user_id=%d err=%v", user.ID, err)
-	}
-
-	return &Response{
-		StatusCode: http.StatusCreated,
-		Message:    "Pendaftaran berhasil. Data diekstrak dari KRS. Silakan tunggu verifikasi admin.",
-		Data: KRSPreviewResponse{
-			UserID:              user.ID,
-			Name:                krsData.Name,
-			NIM:                 krsData.NIM,
-			ProgramStudi:        krsData.ProgramStudi,
-			Angkatan:            krsData.Angkatan,
-			SemesterMasukKuliah: semesterMasukKuliah,
-		},
-	}, nil
 }
 
 // UpdateMyProfile allows a user to update their own profile (name and profile_photo).
@@ -1332,6 +1218,8 @@ func (s *Service) UpdateMyProfile(userID uint, req UpdateMyProfileRequest) (*Res
 		log.Printf("error updating user profile: user_id=%d err=%v", userID, err)
 		return nil, errs.InternalServerError("Gagal memperbarui profil")
 	}
+
+	realtime.Publish("me", "profile-updated", userID)
 
 	return &Response{StatusCode: http.StatusOK, Message: "Profil berhasil diperbarui"}, nil
 }
@@ -1395,14 +1283,58 @@ func (s *Service) resolvePendingStudent(studentID uint) (*migration.Student, err
 
 func defaultStaffJabatan(roleCode string) string {
 	switch strings.ToUpper(strings.TrimSpace(roleCode)) {
-	case "DEKAN":
+	case "ATASAN":
 		return "Dekan"
-	case "WAKIL_DEKAN":
-		return "Wakil Dekan"
+	case "KOPRODI":
+		return "Koprodi"
+	case "KABAG":
+		return "Kabag"
+	case "KAJUR":
+		return "Kajur"
 	case "ADMIN":
 		return "Admin Fakultas"
 	default:
 		return "Staff"
+	}
+}
+
+func normalizeOfficialJabatan(value string) (string, bool) {
+	normalized := strings.ToUpper(strings.Join(strings.Fields(value), " "))
+	normalized = strings.ReplaceAll(normalized, ".", "")
+	switch normalized {
+	case "DEKAN":
+		return "Dekan", true
+	case "WAKIL DEKAN 1":
+		return "Wakil Dekan 1", true
+	case "WAKIL DEKAN 2":
+		return "Wakil Dekan 2", true
+	case "WAKIL DEKAN 3":
+		return "Wakil Dekan 3", true
+	case "KOPRODI":
+		return "Koprodi", true
+	case "KABAG":
+		return "Kabag", true
+	case "KAJUR":
+		return "Kajur", true
+	default:
+		return "", false
+	}
+}
+
+func defaultStaffRoleName(roleCode string) string {
+	switch strings.ToUpper(strings.TrimSpace(roleCode)) {
+	case "ADMIN":
+		return "Administrator"
+	case "ATASAN":
+		return "Atasan"
+	case "KOPRODI":
+		return "Koordinator Program Studi"
+	case "KABAG":
+		return "Kepala Bagian"
+	case "KAJUR":
+		return "Ketua Jurusan"
+	default:
+		return defaultStaffJabatan(roleCode)
 	}
 }
 
@@ -1483,7 +1415,7 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 			isStudent = true
 			continue
 		}
-		if role.Code == "DEKAN" || role.Code == "WAKIL_DEKAN" {
+		if constants.IsOfficialRoleCode(role.Code) {
 			isOfficial = true
 		}
 	}
@@ -1518,22 +1450,4 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 	}
 
 	return nil
-}
-
-func (s *Service) issueEmailVerificationCode(ctx context.Context, usr *migration.User) error {
-	code, err := helpers.GenerateEmailVerificationCode()
-	if err != nil {
-		return err
-	}
-
-	codeHash, err := helpers.HashPassword(code)
-	if err != nil {
-		return err
-	}
-
-	if err := s.Repo.SetUserEmailVerificationCode(s.Repo.DB, usr.ID, codeHash, time.Now().Add(emailVerificationCodeTTL)); err != nil {
-		return err
-	}
-
-	return helpers.SendVerificationEmailWithContext(ctx, usr.Email, usr.Name, code)
 }

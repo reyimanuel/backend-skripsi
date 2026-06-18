@@ -50,10 +50,11 @@ type UploadAttachmentsResponse struct {
 }
 
 type ApproveLetterRequest struct {
-	Action       string `json:"action" binding:"required,oneof=approve reject forward"`
-	SignedByRole string `json:"signed_by_role"` // dekan | wakil_dekan | wakil_dekan_1 | wakil_dekan_2 | wakil_dekan_3
-	LetterNumber string `json:"letter_number"`
-	Notes        string `json:"notes"`
+	Action           string `json:"action" binding:"required,oneof=approve reject forward"`
+	SignedByRole     string `json:"signed_by_role"` // compatibility field; official forwarding uses target_official_id
+	TargetOfficialID uint   `json:"target_official_id"`
+	LetterNumber     string `json:"letter_number"`
+	Notes            string `json:"notes"`
 }
 
 type HistoryActor struct {
@@ -70,17 +71,18 @@ type LetterHistoryItem struct {
 }
 
 type LetterHistoryDetail struct {
-	ID           uint             `json:"id"`
-	LetterTypeID uint             `json:"letter_type_id"`
-	Subject      string           `json:"subject"`
-	Status       string           `json:"status"`
-	LetterNumber *string          `json:"letter_number,omitempty"`
-	Payload      map[string]any   `json:"payload"`
-	Attachments  []AttachmentItem `json:"attachments"`
-	Student      *StudentSummary  `json:"student,omitempty"`
-	PreviewURL   string           `json:"preview_url"`
-	CreatedAt    time.Time        `json:"created_at"`
-	UpdatedAt    time.Time        `json:"updated_at"`
+	ID           uint               `json:"id"`
+	LetterTypeID uint               `json:"letter_type_id"`
+	LetterType   *LetterTypeSummary `json:"letter_type,omitempty"`
+	Subject      string             `json:"subject"`
+	Status       string             `json:"status"`
+	LetterNumber *string            `json:"letter_number,omitempty"`
+	Payload      map[string]any     `json:"payload"`
+	Attachments  []AttachmentItem   `json:"attachments"`
+	Student      *StudentSummary    `json:"student,omitempty"`
+	PreviewURL   string             `json:"preview_url"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 type LetterHistoryAndDetailData struct {
@@ -100,9 +102,11 @@ type ListLettersQuery struct {
 }
 
 type LetterTypeSummary struct {
-	ID   uint   `json:"id"`
-	Code string `json:"code"`
-	Name string `json:"name"`
+	ID                 uint   `json:"id"`
+	Code               string `json:"code"`
+	Name               string `json:"name"`
+	WorkCode           string `json:"kode_kerja"`
+	ClassificationCode string `json:"kode_klasifikasi"`
 }
 
 type StudentSummary struct {
@@ -110,6 +114,15 @@ type StudentSummary struct {
 	UserID    uint   `json:"user_id"`
 	Name      string `json:"name"`
 	NIM       string `json:"nim"`
+}
+
+type OfficialTargetItem struct {
+	ID       uint   `json:"id"`
+	UserID   uint   `json:"user_id"`
+	Name     string `json:"name"`
+	RoleCode string `json:"role_code"`
+	Jabatan  string `json:"jabatan"`
+	NIP      string `json:"nip,omitempty"`
 }
 
 type LetterListItem struct {

@@ -4,7 +4,7 @@ Backend service for a campus letter/correspondence administration system.
 
 This project provides:
 - Authentication (JWT, role-based access control)
-- Student registration + verification flow
+- Student and staff invitation completion flow
 - Letter templates (DOCX) with `{{placeholder}}` detection and validation
 - Letter lifecycle: draft -> submitted -> forwarded -> approved -> signed/rejected
 - PDF previews generated from DOCX using LibreOffice (headless)
@@ -84,8 +84,10 @@ If `EMAIL_PROVIDER=smtp`:
 - `SMTP_SENDER_EMAIL` (optional; defaults to `SMTP_USER`)
 - `SMTP_SENDER_NAME` (optional)
 
-If `EMAIL_PROVIDER=sendgrid` (or when using SendGrid in code):
-- `SENDGRID_API_KEY`, `SENDGRID_SENDER_EMAIL`, `SENDGRID_SENDER_NAME`
+If `EMAIL_PROVIDER=mailersend`:
+- `MAILERSEND_API_KEY`, `MAILERSEND_SENDER_EMAIL`, `MAILERSEND_SENDER_NAME`
+
+Use `mailersend` when you want to send mail through MailerSend's HTTP API instead of SMTP.
 
 ### Notifications (required)
 
@@ -192,7 +194,12 @@ When seeding runs, these accounts are ensured (password: `password`):
 
 - Admin: `admin@kampus.ac.id`
 - Dekan: `dekan@kampus.ac.id`
-- Wakil Dekan: `wakildekan@kampus.ac.id`
+- Wakil Dekan 1: `wakil.dekan1@kampus.ac.id`
+- Wakil Dekan 2: `wakil.dekan2@kampus.ac.id`
+- Wakil Dekan 3: `wakil.dekan3@kampus.ac.id`
+- Koprodi: `koprodi@kampus.ac.id`
+- Kabag: `kabag@kampus.ac.id`
+- Kajur: `kajur@kampus.ac.id`
 - Mahasiswa: `mahasiswa@test.ac.id`
 
 Do not use these credentials in production.
@@ -203,8 +210,7 @@ Do not use these credentials in production.
 - Roles used by the system:
   - `ADMIN`
   - `MAHASISWA`
-  - `DEKAN`
-  - `WAKIL_DEKAN`
+  - `ATASAN`
 
 Verification rules summary is documented in [docs/authorization-verification-rules.md](docs/authorization-verification-rules.md).
 
@@ -223,7 +229,7 @@ At draft creation/update and submission time, required keys are validated. The s
 ## API Documentation
 
 - OpenAPI spec: [docs/openapi.yaml](docs/openapi.yaml)
-- Alur pengajuan surat mahasiswa sampai dekan: [docs/alur-pengajuan-surat.md](docs/alur-pengajuan-surat.md)
+- Alur pengajuan surat mahasiswa sampai atasan: [docs/alur-pengajuan-surat.md](docs/alur-pengajuan-surat.md)
 - Manual penggunaan backend + frontend: [docs/manual-penggunaan-project.md](docs/manual-penggunaan-project.md)
 - Base path: `/api`
 

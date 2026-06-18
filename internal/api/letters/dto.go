@@ -18,16 +18,20 @@ type UpdateAttachmentRequirementsRequest struct {
 }
 
 type UpdateLetterTypeRequest struct {
-	Code        string `json:"code"`
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Code               string `json:"code"`
+	Name               string `json:"name" binding:"required"`
+	Description        string `json:"description"`
+	WorkCode           string `json:"kode_kerja"`
+	ClassificationCode string `json:"kode_klasifikasi"`
 }
 
 type LetterTypeResponse struct {
-	ID          uint   `json:"id"`
-	Code        string `json:"code"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID                 uint   `json:"id"`
+	Code               string `json:"code"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	WorkCode           string `json:"kode_kerja"`
+	ClassificationCode string `json:"kode_klasifikasi"`
 }
 
 type LetterTypeRequirementsResponse struct {
@@ -58,10 +62,12 @@ type UploadTemplateRequest struct {
 //
 // File is handled separately via ctx.FormFile("file").
 type UploadTemplateV2Request struct {
-	LetterTypeID string `form:"letter_type_id"`
-	Code         string `form:"code"`
-	Name         string `form:"name"`
-	Description  string `form:"description"`
+	LetterTypeID       string `form:"letter_type_id"`
+	Code               string `form:"code"`
+	Name               string `form:"name"`
+	Description        string `form:"description"`
+	WorkCode           string `form:"kode_kerja"`
+	ClassificationCode string `form:"kode_klasifikasi"`
 }
 
 type TemplateListItem struct {
@@ -70,12 +76,16 @@ type TemplateListItem struct {
 	Code                string    `json:"code"`
 	Name                string    `json:"name"`
 	Description         string    `json:"description"`
+	WorkCode            string    `json:"kode_kerja"`
+	ClassificationCode  string    `json:"kode_klasifikasi"`
 	FilePath            string    `json:"file_path"`
 	FileType            string    `json:"file_type"`
 	CreatedBy           uint      `json:"created_by"`
 	CreatorName         string    `json:"creator_name"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+	Placeholders        []string  `json:"placeholders"`
+	AutoFilledKeys      []string  `json:"auto_filled_keys"`
 	RequiredPayloadKeys []string  `json:"required_payload_keys"`
 }
 
@@ -84,6 +94,8 @@ type TemplateUploadV2Data struct {
 	Code                string   `json:"code"`
 	Name                string   `json:"name"`
 	Description         string   `json:"description"`
+	WorkCode            string   `json:"kode_kerja"`
+	ClassificationCode  string   `json:"kode_klasifikasi"`
 	FilePath            string   `json:"file_path"`
 	Placeholders        []string `json:"placeholders"`
 	AutoFilledKeys      []string `json:"auto_filled_keys"`

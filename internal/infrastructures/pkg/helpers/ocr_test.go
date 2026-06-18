@@ -50,7 +50,7 @@ IP Semester Lalu 215
 Beban SKS 19
 Menyetujui,
 Mengetahui, Manado, 16 Maret 2026
-Wakil Dekan 1 Dosen PA Mahasiswa,
+Atasan 1 Dosen PA Mahasiswa,
 Dr. Judy O. Waani, ST, MT ENR NDE ST ES REGINA NATHANIA AGUSSALIM
 196410101995121001 190 220211060178`
 
@@ -81,7 +81,7 @@ Pembimbing Akademik JIMMY REAGEN ROBOT ST, MTI
 IP Semester Lalu 215
 Beban SKS 19
 Mengetahui, Menyetujui, Manado, 16 Maret 2026
-Wakil Dekan 1 Dosen PA Mahasiswa,
+Atasan 1 Dosen PA Mahasiswa,
 Dr. Judy O. Waani, ST, MT JIMMY REAGEN ROBOT ST, MTI VERONICA WAEO:
 196410101995121001 198012092008011004 220211060123`
 
@@ -115,7 +115,7 @@ Pembimbing Akademik YURI VANLI AKAY S.Pd, MT
 IP Semester Lalu 291
 Beban SKS 19
 Mengetahui, Menyetujui, Manado, 16 Maret 2026
-Wakil Dekan 1 Dosen PA Mahasiswa,
+Atasan 1 Dosen PA Mahasiswa,
 Dr. Judy O. Waani, ST, MT YURI VANLI AKAY S.Pd, MT FIRDA POTABUGA
 196410101995121001 199105242019031014 220211060217`
 

@@ -68,10 +68,12 @@ func (r *Repository) UpdateLetterTypeAttachmentRequirements(tx *gorm.DB, letterT
 		Update("attachment_requirements", reqs).Error
 }
 
-func (r *Repository) UpdateLetterType(tx *gorm.DB, id uint, code, name, description string) error {
+func (r *Repository) UpdateLetterType(tx *gorm.DB, id uint, code, name, description, workCode, classificationCode string) error {
 	updates := map[string]interface{}{
-		"name":        name,
-		"description": description,
+		"name":             name,
+		"description":      description,
+		"kode_kerja":       workCode,
+		"kode_klasifikasi": classificationCode,
 	}
 	if code != "" {
 		updates["code"] = code

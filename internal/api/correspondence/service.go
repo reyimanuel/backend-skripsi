@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/policy"
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/push"
 	"github.com/reyimanuel/letter-administration/internal/migration"
+	"github.com/reyimanuel/letter-administration/internal/realtime"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -43,6 +45,19 @@ const (
 	historyApproved  = "APPROVED"
 	historyNumbered  = "NUMBERED"
 	historyRejected  = "REJECTED"
+
+	maxLetterSubjectRunes      = 150
+	maxLetterPayloadKeys       = 60
+	maxLetterPayloadValueRunes = 1000
+	maxAttachmentBytes         = 5 * 1024 * 1024
+	maxActionNotesRunes        = 500
+)
+
+var (
+	payloadKeyPattern           = regexp.MustCompile(`^[a-z][a-z0-9_]{1,49}$`)
+	attachmentKeyPattern        = regexp.MustCompile(`^[a-z][a-z0-9_]{1,49}$`)
+	letterNumberSeqPattern      = regexp.MustCompile(`^[0-9]{1,6}$`)
+	additionalStudentNIMPattern = regexp.MustCompile(`^[0-9]{6,20}$`)
 )
 
 var blockedPayloadFields = map[string]struct{}{
@@ -53,6 +68,10 @@ var blockedPayloadFields = map[string]struct{}{
 	"angkatan":              {},
 	"semester_masuk_kuliah": {},
 	"tahun_ajaran":          {},
+	"hari":                  {},
+	"tanggal":               {},
+	"bulan":                 {},
+	"tahun":                 {},
 	"nomor_surat":           {},
 	"official":              {},
 	"nip":                   {},
@@ -70,6 +89,19 @@ var studentTemplateFields = map[string]struct{}{
 	"program_studi":         {},
 	"angkatan":              {},
 	"semester_masuk_kuliah": {},
+	"hari":                  {},
+	"tanggal":               {},
+	"bulan":                 {},
+	"tahun":                 {},
+}
+
+func hasOfficialRole(roles []string) bool {
+	for _, role := range roles {
+		if constants.IsOfficialRoleCode(role) {
+			return true
+		}
+	}
+	return false
 }
 
 type Service struct {
@@ -82,11 +114,44 @@ func NewService(repo *Repository, lettersRepo *letters.Repository, usersRepo *us
 	return &Service{Repo: repo, LettersRepo: lettersRepo, UsersRepo: usersRepo}
 }
 
+func (s *Service) ListActiveOfficials() (*Response, error) {
+	var items []OfficialTargetItem
+	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+		officials, err := s.UsersRepo.ListActiveOfficials(tx)
+		if err != nil {
+			log.Printf("error listing active officials: %v", err)
+			return errs.InternalServerError("Gagal mengambil daftar pejabat")
+		}
+
+		items = make([]OfficialTargetItem, 0, len(officials))
+		for _, official := range officials {
+			roleCode := officialRoleCode(official)
+			if roleCode == "" {
+				continue
+			}
+			items = append(items, OfficialTargetItem{
+				ID:       official.ID,
+				UserID:   official.UserID,
+				Name:     official.User.Name,
+				RoleCode: roleCode,
+				Jabatan:  strings.TrimSpace(official.Jabatan),
+				NIP:      strings.TrimSpace(official.NIP),
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Response{StatusCode: http.StatusOK, Message: "Daftar pejabat berhasil diambil", Data: items}, nil
+}
+
 func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOfficial bool) (string, string, error) {
 	var filePath string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
 		if err != nil {
 			log.Printf("letter not found: id=%d err=%v", letterID, err)
 			return errs.NotFound("Surat tidak ditemukan")
@@ -242,7 +307,13 @@ func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Respon
 					}
 					return l.LetterNumber
 				}(),
-				LetterType: LetterTypeSummary{ID: l.LetterType.ID, Code: l.LetterType.Code, Name: l.LetterType.Name},
+				LetterType: LetterTypeSummary{
+					ID:                 l.LetterType.ID,
+					Code:               l.LetterType.Code,
+					Name:               l.LetterType.Name,
+					WorkCode:           l.LetterType.WorkCode,
+					ClassificationCode: l.LetterType.ClassificationCode,
+				},
 				Student:    student,
 				PreviewURL: previewURL,
 				HistoryURL: historyURL,
@@ -270,8 +341,15 @@ func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Respon
 func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Response, error) {
 	var letter *migration.Letter
 	var payloadMap map[string]any
+	subject, err := validateLetterSubject(req.Subject)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSubmitPayload(req.Payload); err != nil {
+		return nil, err
+	}
 
-	err := s.Repo.WithTx(func(tx *gorm.DB) error {
+	err = s.Repo.WithTx(func(tx *gorm.DB) error {
 		student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
 		if err != nil {
 			return errs.Forbidden("Hanya mahasiswa yang dapat membuat draft surat")
@@ -299,7 +377,7 @@ func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Respo
 		letter = &migration.Letter{
 			StudentID:    student.ID,
 			LetterTypeID: req.LetterTypeID,
-			Subject:      req.Subject,
+			Subject:      subject,
 			Payload:      payloadJSON,
 			Status:       statusDraft,
 			FilePath:     "",
@@ -313,6 +391,8 @@ func (s *Service) CreateDraftLetter(userID uint, req CreateDraftRequest) (*Respo
 	if err != nil {
 		return nil, err
 	}
+
+	realtime.Publish("letters", "letter-draft-created", letter.ID)
 
 	return &Response{
 		StatusCode: http.StatusCreated,
@@ -355,9 +435,9 @@ func (s *Service) UpdateDraftLetter(letterID uint, userID uint, req UpdateDraftR
 		}
 
 		if req.Subject != nil {
-			subject := strings.TrimSpace(*req.Subject)
-			if subject == "" {
-				return errs.BadRequest("subject tidak boleh kosong")
+			subject, err := validateLetterSubject(*req.Subject)
+			if err != nil {
+				return err
 			}
 			letter.Subject = subject
 		}
@@ -371,6 +451,9 @@ func (s *Service) UpdateDraftLetter(letterID uint, userID uint, req UpdateDraftR
 		}
 
 		if req.Payload != nil {
+			if err := validateSubmitPayload(req.Payload); err != nil {
+				return err
+			}
 			incoming := buildSubmitPayload(req.Payload)
 			for k, v := range incoming {
 				payloadMap[k] = v
@@ -403,6 +486,8 @@ func (s *Service) UpdateDraftLetter(letterID uint, userID uint, req UpdateDraftR
 		return nil, err
 	}
 
+	realtime.Publish("letters", "letter-draft-updated", letterOut.ID)
+
 	return &Response{
 		StatusCode: http.StatusOK,
 		Message:    "Draft surat berhasil diperbarui",
@@ -429,7 +514,7 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 
 	items := make([]AttachmentItem, 0, len(files))
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
 		if err != nil {
 			return errs.NotFound("Surat tidak ditemukan")
 		}
@@ -454,6 +539,9 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 			}
 			if key == "" {
 				return errs.BadRequest("key berkas wajib diisi")
+			}
+			if err := validateAttachmentInput(key, f); err != nil {
+				return err
 			}
 			newName := helpers.GenerateUniqueFileName(f.Filename)
 			newPath := filepath.Join("public", "generated", "attachments", fmt.Sprintf("letter_%d", letterID), newName)
@@ -492,6 +580,8 @@ func (s *Service) UploadAttachments(letterID uint, userID uint, isAdmin bool, fi
 	if err != nil {
 		return nil, err
 	}
+
+	realtime.Publish("letters", "letter-attachments-uploaded", letterID)
 
 	return &Response{StatusCode: http.StatusCreated, Message: "Berkas berhasil diupload", Data: UploadAttachmentsResponse{LetterID: letterID, Attachments: items}}, nil
 }
@@ -701,6 +791,8 @@ func (s *Service) SubmitDraftLetter(letterID uint, userID uint) (*Response, erro
 		log.Printf("push admin notify (letter_submitted) failed: letter_id=%d err=%v", letterID, err)
 	}
 
+	realtime.PublishTopics([]string{"letters", "letter-approvals"}, "letter-submitted", letterID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil disubmit", Data: PreviewResponse{ID: letterID, PreviewURL: previewURL}}, nil
 }
 
@@ -732,6 +824,10 @@ func parseRequiredAttachmentKeys(raw datatypes.JSON) ([]string, error) {
 }
 
 func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequest) (*Response, error) {
+	if err := validateReviewLetterRequest(req); err != nil {
+		return nil, err
+	}
+
 	historyAction := historyApproved
 	message := "Surat berhasil disetujui"
 
@@ -748,9 +844,9 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		}
 		roles := actor.RoleSlice()
 		isAdmin := slices.Contains(roles, "ADMIN")
-		isOfficialRole := slices.Contains(roles, "DEKAN") || slices.Contains(roles, "WAKIL_DEKAN")
+		isOfficialRole := hasOfficialRole(roles)
 
-		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
 		if err != nil {
 			log.Printf("letter not found: id=%d err=%v", letterID, err)
 			return errs.NotFound("Surat tidak ditemukan")
@@ -844,16 +940,15 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		case "forward":
 			historyAction = historyForwarded
 			message = "Surat berhasil diteruskan"
-			official, err := s.resolveOfficial(tx, req.SignedByRole)
+			official, roleCode, err := s.resolveForwardTarget(tx, req)
 			if err != nil {
 				return err
+			}
+			if letter.Status == statusForwarded && letter.SignedByID != nil && *letter.SignedByID == official.ID {
+				return errs.BadRequest("Pejabat tujuan harus berbeda dari pejabat saat ini")
 			}
 
 			// Move approval stage to selected official role (pending).
-			_, roleCode, err := officialTargetsForRole(req.SignedByRole)
-			if err != nil {
-				return err
-			}
 			role, err := s.UsersRepo.GetRoleByCode(tx, roleCode)
 			if err != nil {
 				return errs.InternalServerError("Gagal memvalidasi role penandatangan")
@@ -887,9 +982,9 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				break
 			}
 
-			nomorSurat := strings.TrimSpace(req.LetterNumber)
-			if nomorSurat == "" {
-				return errs.BadRequest("Nomor surat wajib diisi")
+			nomorSurat, err := buildLetterNumber(req.LetterNumber, letter.LetterType, now)
+			if err != nil {
+				return err
 			}
 
 			used, err := s.Repo.IsLetterNumberUsed(tx, nomorSurat, letter.ID)
@@ -930,6 +1025,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 
 			output := fmt.Sprintf("public/generated/final_%d.docx", letter.ID)
 			data := buildTemplateData(student, payloadMap)
+			addOfficialTemplateData(data, official)
 			imageKeys := templateImagePlaceholderKeys(templatePlaceholders)
 			if len(imageKeys) > 0 {
 				atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
@@ -1018,6 +1114,8 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		}
 	}
 
+	realtime.PublishTopics([]string{"letters", "letter-approvals"}, "letter-"+req.Action, letterID)
+
 	return &Response{
 		StatusCode: http.StatusOK,
 		Message:    message,
@@ -1033,7 +1131,7 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 	var attachmentPaths []string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		letter, err := s.LettersRepo.GetLetterByID(tx, letterID)
+		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("Surat tidak ditemukan")
@@ -1110,6 +1208,8 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 		}
 	}
 
+	realtime.PublishTopics([]string{"letters", "letter-approvals"}, "letter-deleted", letterID)
+
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
@@ -1181,6 +1281,13 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 		detail = LetterHistoryDetail{
 			ID:           letter.ID,
 			LetterTypeID: letter.LetterTypeID,
+			LetterType: &LetterTypeSummary{
+				ID:                 letter.LetterType.ID,
+				Code:               letter.LetterType.Code,
+				Name:               letter.LetterType.Name,
+				WorkCode:           letter.LetterType.WorkCode,
+				ClassificationCode: letter.LetterType.ClassificationCode,
+			},
 			Subject:      letter.Subject,
 			Status:       letter.Status,
 			LetterNumber: letter.LetterNumber,
@@ -1334,7 +1441,13 @@ func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*R
 					}
 					return l.LetterNumber
 				}(),
-				LetterType: LetterTypeSummary{ID: l.LetterType.ID, Code: l.LetterType.Code, Name: l.LetterType.Name},
+				LetterType: LetterTypeSummary{
+					ID:                 l.LetterType.ID,
+					Code:               l.LetterType.Code,
+					Name:               l.LetterType.Name,
+					WorkCode:           l.LetterType.WorkCode,
+					ClassificationCode: l.LetterType.ClassificationCode,
+				},
 				Student:    student,
 				PreviewURL: previewURL,
 				HistoryURL: historyURL,
@@ -1372,55 +1485,151 @@ func parseTimeOrDate(value string) (time.Time, error) {
 
 // private helpers
 
-func (s *Service) resolveOfficial(tx *gorm.DB, signedByRole string) (*migration.Official, error) {
-	targets, _, err := officialTargetsForRole(signedByRole)
-	if err != nil {
-		return nil, err
-	}
-
-	var lastErr error
-	for _, target := range targets {
-		official, err := s.UsersRepo.GetActiveOfficialByRole(tx, target)
+func (s *Service) resolveForwardTarget(tx *gorm.DB, req ApproveLetterRequest) (*migration.Official, string, error) {
+	if req.TargetOfficialID != 0 {
+		official, err := s.UsersRepo.GetActiveOfficialByID(tx, req.TargetOfficialID)
 		if err != nil {
-			lastErr = err
-			continue
+			return nil, "", errs.NotFound("Pejabat tujuan tidak ditemukan atau tidak aktif")
 		}
-
 		if err := policy.CanOfficialAct(&official.User, official); err != nil {
-			return nil, err
+			return nil, "", err
 		}
-
-		return official, nil
+		roleCode := officialRoleCode(*official)
+		if roleCode == "" {
+			return nil, "", errs.BadRequest("Pejabat tujuan tidak memiliki role pejabat yang valid")
+		}
+		return official, roleCode, nil
 	}
 
-	log.Printf("official not found: jabatan_candidates=%v err=%v", targets, lastErr)
-	return nil, errs.NotFound("Pejabat penandatangan tidak ditemukan atau tidak aktif")
+	return nil, "", errs.BadRequest("Atasan tujuan wajib dipilih")
 }
 
-func officialTargetsForRole(signedByRole string) ([]string, string, error) {
-	if signedByRole == "" {
-		return nil, "", errs.BadRequest("Penandatangan wajib dipilih")
+func officialRoleCode(official migration.Official) string {
+	for _, role := range official.User.Roles {
+		code := strings.ToUpper(strings.TrimSpace(role.Code))
+		if constants.IsOfficialRoleCode(code) {
+			return code
+		}
+	}
+	return ""
+}
+
+func validateLetterSubject(subject string) (string, error) {
+	trimmed := strings.TrimSpace(subject)
+	if trimmed == "" {
+		return "", errs.BadRequest("Perihal surat wajib diisi")
+	}
+	length := len([]rune(trimmed))
+	if length < 3 || length > maxLetterSubjectRunes {
+		return "", errs.BadRequest("Perihal surat harus 3-150 karakter")
+	}
+	if !helpers.IsSafeHTML(trimmed) {
+		return "", errs.BadRequest("Perihal surat mengandung karakter tidak aman")
+	}
+	return trimmed, nil
+}
+
+func validateSubmitPayload(payload map[string]any) error {
+	if payload == nil {
+		return errs.BadRequest("Data surat wajib diisi")
+	}
+	if len(payload) > maxLetterPayloadKeys {
+		return errs.BadRequest("Data surat terlalu banyak")
 	}
 
-	normalized := strings.ToLower(strings.TrimSpace(signedByRole))
-	normalized = strings.ReplaceAll(normalized, "_", " ")
-	normalized = strings.ReplaceAll(normalized, "-", " ")
-	normalized = strings.Join(strings.Fields(normalized), " ")
+	for key, value := range payload {
+		normalizedKey := strings.TrimSpace(key)
+		if normalizedKey == "" {
+			return errs.BadRequest("Key data surat tidak boleh kosong")
+		}
+		if !payloadKeyPattern.MatchString(normalizedKey) {
+			return errs.BadRequest("Key data surat harus 2-50 karakter, diawali huruf kecil, dan hanya boleh berisi huruf kecil, angka, atau underscore")
+		}
+		if _, blocked := blockedPayloadFields[normalizedKey]; blocked {
+			continue
+		}
+		if err := validatePayloadValue(normalizedKey, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	switch normalized {
-	case "dekan":
-		return []string{"dekan"}, "DEKAN", nil
-	case "wakil dekan":
-		return []string{"wakil dekan"}, "WAKIL_DEKAN", nil
-	case "wakil dekan 1", "wakil dekan i", "wakil dekan satu":
-		return []string{"wakil dekan 1", "wakil dekan i", "wakil dekan satu"}, "WAKIL_DEKAN", nil
-	case "wakil dekan 2", "wakil dekan ii", "wakil dekan dua":
-		return []string{"wakil dekan 2", "wakil dekan ii", "wakil dekan dua"}, "WAKIL_DEKAN", nil
-	case "wakil dekan 3", "wakil dekan iii", "wakil dekan tiga":
-		return []string{"wakil dekan 3", "wakil dekan iii", "wakil dekan tiga"}, "WAKIL_DEKAN", nil
+func validatePayloadValue(key string, value any) error {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if len([]rune(trimmed)) > maxLetterPayloadValueRunes {
+			return errs.BadRequest("Nilai data surat maksimal 1000 karakter")
+		}
+		if !helpers.IsSafeHTML(trimmed) {
+			return errs.BadRequest("Nilai data surat mengandung karakter tidak aman")
+		}
+	case []any:
+		if key != "mahasiswa_lain" {
+			return errs.BadRequest("Data list hanya diperbolehkan untuk mahasiswa_lain")
+		}
+		if len(typed) > 20 {
+			return errs.BadRequest("Mahasiswa tambahan maksimal 20 orang")
+		}
+		for _, item := range typed {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return errs.BadRequest("Format mahasiswa tambahan tidak valid")
+			}
+			name := strings.TrimSpace(fmt.Sprint(row["name"]))
+			nim := strings.TrimSpace(fmt.Sprint(row["nim"]))
+			if len([]rune(name)) < 3 || len([]rune(name)) > 100 || !helpers.IsSafeHTML(name) {
+				return errs.BadRequest("Nama mahasiswa tambahan harus 3-100 karakter dan tidak mengandung karakter tidak aman")
+			}
+			if !additionalStudentNIMPattern.MatchString(nim) {
+				return errs.BadRequest("NIM mahasiswa tambahan harus 6-20 digit")
+			}
+		}
 	default:
-		return nil, "", errs.BadRequest("Penandatangan tidak valid")
+		return errs.BadRequest("Nilai data surat harus berupa teks")
 	}
+	return nil
+}
+
+func validateAttachmentInput(key string, file *multipart.FileHeader) error {
+	if !attachmentKeyPattern.MatchString(key) {
+		return errs.BadRequest("Key berkas harus 2-50 karakter, diawali huruf kecil, dan hanya boleh berisi huruf kecil, angka, atau underscore")
+	}
+	if file == nil {
+		return errs.BadRequest("file tidak ditemukan")
+	}
+	if file.Size <= 0 {
+		return errs.BadRequest("file berkas kosong")
+	}
+	if file.Size > maxAttachmentBytes {
+		return errs.BadRequest("ukuran berkas maksimal 5MB")
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".pdf" && ext != ".png" && ext != ".jpg" && ext != ".jpeg" {
+		return errs.BadRequest("berkas harus berformat PDF, PNG, JPG, atau JPEG")
+	}
+	return nil
+}
+
+func validateReviewLetterRequest(req ApproveLetterRequest) error {
+	notes := strings.TrimSpace(req.Notes)
+	if len([]rune(notes)) > maxActionNotesRunes {
+		return errs.BadRequest("Catatan maksimal 500 karakter")
+	}
+	if notes != "" && !helpers.IsSafeHTML(notes) {
+		return errs.BadRequest("Catatan mengandung karakter tidak aman")
+	}
+	if req.Action == "reject" && len([]rune(notes)) < 10 {
+		return errs.BadRequest("Catatan penolakan minimal 10 karakter")
+	}
+	if req.Action == "forward" && req.TargetOfficialID == 0 {
+		return errs.BadRequest("Atasan tujuan wajib dipilih")
+	}
+	return nil
 }
 
 func (s *Service) generateLetterDocument(templatePath string, outputPath string, data map[string]string) error {
@@ -1466,6 +1675,65 @@ func buildSubmitPayload(payload map[string]any) map[string]any {
 func ensureLetterSystemPayload(payload map[string]any) {
 	if raw, ok := payload["tahun_ajaran"]; !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
 		payload["tahun_ajaran"] = helpers.GetCurrentAcademicYear()
+	}
+}
+
+func normalizeLetterNumberSegment(value string) string {
+	segment := strings.ToUpper(strings.TrimSpace(value))
+	segment = strings.ReplaceAll(segment, " ", ".")
+	segment = strings.Trim(segment, ".")
+	return segment
+}
+
+func normalizeLetterNumberWorkCode(value string) string {
+	workCode := normalizeLetterNumberSegment(value)
+	if workCode == "UN12.2" {
+		return ""
+	}
+	return strings.TrimPrefix(workCode, "UN12.2.")
+}
+
+func buildLetterNumber(sequence string, letterType migration.LetterType, now time.Time) (string, error) {
+	seq := strings.TrimSpace(sequence)
+	if seq == "" {
+		return "", errs.BadRequest("Nomor urut surat wajib diisi")
+	}
+	if strings.Contains(seq, "/") {
+		return "", errs.BadRequest("Isi nomor urut saja. Format nomor surat lengkap dibuat otomatis oleh sistem")
+	}
+	if !letterNumberSeqPattern.MatchString(seq) {
+		return "", errs.BadRequest("Nomor urut surat harus 1-6 digit angka")
+	}
+
+	workCode := normalizeLetterNumberWorkCode(letterType.WorkCode)
+	classificationCode := normalizeLetterNumberSegment(letterType.ClassificationCode)
+	if workCode == "" {
+		return "", errs.BadRequest("Kode kerja pada template surat belum diisi")
+	}
+	if classificationCode == "" {
+		return "", errs.BadRequest("Kode klasifikasi pada template surat belum diisi")
+	}
+	if strings.Contains(workCode, "/") || strings.Contains(classificationCode, "/") {
+		return "", errs.BadRequest("Kode kerja dan kode klasifikasi tidak boleh mengandung karakter /")
+	}
+
+	return fmt.Sprintf("%s/UN12.2.%s/%s/%d", seq, workCode, classificationCode, now.Year()), nil
+}
+
+func currentIndonesianDateParts(now time.Time) map[string]string {
+	days := []string{
+		"Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu",
+	}
+	months := []string{
+		"", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+		"Juli", "Agustus", "September", "Oktober", "November", "Desember",
+	}
+
+	return map[string]string{
+		"hari":    days[now.Weekday()],
+		"tanggal": fmt.Sprintf("%d", now.Day()),
+		"bulan":   months[now.Month()],
+		"tahun":   fmt.Sprintf("%d", now.Year()),
 	}
 }
 
@@ -1535,12 +1803,20 @@ func buildApprovedPayload(payload map[string]any, letterNumber string, official 
 	enriched["pangkat"] = official.Pangkat
 	enriched["jabatan"] = official.Jabatan
 
-	// Optional placeholders (template-dependent).
-	// For templates using {{tanda_tangan}}, FillTemplate will embed the signature image into the DOCX.
-	enriched["ttd"] = official.User.Name
-	enriched["tanda_tangan"] = helpers.DocxImage(official.Signature)
-	enriched["signature"] = helpers.ToAbsoluteURL(official.Signature)
 	return enriched
+}
+
+func addOfficialTemplateData(data map[string]string, official *migration.Official) {
+	if data == nil || official == nil {
+		return
+	}
+	data["official"] = official.User.Name
+	data["nip"] = official.NIP
+	data["pangkat"] = official.Pangkat
+	data["jabatan"] = official.Jabatan
+	data["ttd"] = official.User.Name
+	data["tanda_tangan"] = helpers.DocxImage(official.Signature)
+	data["signature"] = helpers.DocxImage(official.Signature)
 }
 
 func additionalStudentRowsFromPayload(payload map[string]any) []helpers.DocxStudentTableRow {
@@ -1586,6 +1862,7 @@ func additionalStudentRowsFromPayload(payload map[string]any) []helpers.DocxStud
 }
 
 func buildTemplateData(student *migration.Student, payload map[string]any) map[string]string {
+	now := time.Now()
 	data := map[string]string{
 		"mahasiswa":             student.User.Name,
 		"nim":                   student.NIM,
@@ -1597,6 +1874,9 @@ func buildTemplateData(student *migration.Student, payload map[string]any) map[s
 			additionalStudentRowsFromPayload(payload)...,
 		)),
 	}
+	for key, value := range currentIndonesianDateParts(now) {
+		data[key] = value
+	}
 
 	for key, value := range payload {
 		if _, blocked := studentTemplateFields[key]; blocked {
@@ -1606,7 +1886,7 @@ func buildTemplateData(student *migration.Student, payload map[string]any) map[s
 			data[key] = ""
 			continue
 		}
-		data[key] = fmt.Sprint(value)
+		data[key] = strings.TrimSpace(fmt.Sprint(value))
 	}
 
 	return data

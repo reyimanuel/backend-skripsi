@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reyimanuel/letter-administration/internal/constants"
 	"github.com/reyimanuel/letter-administration/internal/migration"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -61,7 +62,7 @@ func (r *Repository) GetRoleByCode(tx *gorm.DB, code string) (*migration.Role, e
 func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migration.Official, error) {
 	var officials []migration.Official
 
-	// Normalize: replace underscores with spaces so "WAKIL_DEKAN" matches "Wakil Dekan"
+	// Normalize role-like input so it can match jabatan values when needed.
 	normalized := strings.ReplaceAll(role, "_", " ")
 
 	err := tx.Preload("User").
@@ -85,13 +86,38 @@ func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migrati
 
 func (r *Repository) GetActiveOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
 	var official migration.Official
-	err := tx.Preload("User").
+	err := tx.Preload("User").Preload("User.Roles").
 		Where("user_id = ? AND is_active = ?", userID, true).
 		First(&official).Error
 	if err != nil {
 		return nil, err
 	}
 	return &official, nil
+}
+
+func (r *Repository) GetActiveOfficialByID(tx *gorm.DB, officialID uint) (*migration.Official, error) {
+	var official migration.Official
+	err := tx.Preload("User").Preload("User.Roles").
+		Where("id = ? AND is_active = ?", officialID, true).
+		First(&official).Error
+	if err != nil {
+		return nil, err
+	}
+	return &official, nil
+}
+
+func (r *Repository) ListActiveOfficials(tx *gorm.DB) ([]migration.Official, error) {
+	var officials []migration.Official
+	err := tx.Model(&migration.Official{}).
+		Preload("User").
+		Preload("User.Roles").
+		Joins("JOIN users ON users.id = officials.user_id").
+		Joins("JOIN user_roles ON user_roles.user_id = users.id").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("officials.is_active = ? AND users.is_active = ? AND roles.code IN ?", true, true, constants.OfficialRoleCodes).
+		Order("officials.jabatan ASC, users.name ASC").
+		Find(&officials).Error
+	return officials, err
 }
 
 func (r *Repository) GetByNIM(nim string) (*migration.Student, error) {
@@ -217,9 +243,7 @@ func (r *Repository) GetAllUsers(tx *gorm.DB, page, pageSize int) ([]migration.U
 	var users []migration.User
 	var total int64
 
-	query := baseUserQuery(tx).
-		Joins("LEFT JOIN students ON students.user_id = users.id").
-		Where("students.id IS NULL OR students.admin_verification_status = ?", "approved")
+	query := baseUserQuery(tx)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
