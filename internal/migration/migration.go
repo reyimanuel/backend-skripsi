@@ -198,7 +198,16 @@ func runVerificationRefactorMigration(db *gorm.DB) error {
 					SELECT DISTINCT ur.user_id, atasan_role_id
 					FROM user_roles ur
 					JOIN roles r ON r.id = ur.role_id
-					WHERE r.code IN ('KOPRODI', 'KABAG', 'KAJUR')
+					WHERE r.code IN (
+						'DEKAN',
+						'WAKIL_DEKAN',
+						'WAKIL_DEKAN_1',
+						'WAKIL_DEKAN_2',
+						'WAKIL_DEKAN_3',
+						'KOPRODI',
+						'KABAG',
+						'KAJUR'
+					)
 					  AND NOT EXISTS (
 						  SELECT 1
 						  FROM user_roles existing

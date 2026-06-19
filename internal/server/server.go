@@ -57,9 +57,10 @@ func startHTTPServer(cfg *config.AppConfigurationMap, db *gorm.DB) {
 	r := gin.New()
 	// Register global middleware
 	r.Use(
-		gin.Logger(),                // HTTP request logging
-		gin.Recovery(),              // Panic recovery
-		middleware.CORSMiddleware(), // CORS headers
+		gin.Logger(),                 // HTTP request logging
+		gin.Recovery(),               // Panic recovery
+		middleware.ResponseHeaders(), // Browser security headers
+		middleware.CORSMiddleware(),  // CORS headers
 	)
 
 	// Serve uploaded/generated files.

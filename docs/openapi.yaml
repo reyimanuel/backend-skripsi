@@ -1,14 +1,14 @@
 openapi: 3.0.3
 info:
   title: Letter Administration API
-  version: 1.2.0
+  version: 1.3.0
   description: |
-    API untuk administrasi surat kampus (mahasiswa, admin, dekan, wakil dekan).
+    API untuk administrasi surat kampus (mahasiswa, admin, dan atasan).
 
     Catatan:
     - Semua response JSON menggunakan envelope: { status_code, message, data? }.
     - Endpoint preview mengembalikan PDF (bukan JSON).
-    - Akses berbasis role (ADMIN/MAHASISWA/DEKAN/WAKIL_DEKAN) diterapkan lewat middleware.
+    - Akses berbasis role (ADMIN/MAHASISWA/ATASAN) diterapkan lewat middleware.
 servers:
   - url: /api
 
@@ -17,6 +17,7 @@ tags:
   - name: Letters
   - name: Correspondence
   - name: Notifications
+  - name: Events
 
 paths:
   /users/login:
@@ -75,73 +76,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/BasicEnvelope'
 
-  /users/register:
+  /users/staff-invitations/complete:
     post:
       tags: [Users]
-      summary: Register mahasiswa (multipart + kredensial)
+      summary: Selesaikan aktivasi undangan staff
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/RegisterStudentMultipart'
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password }
+                nip: { type: string }
+                pangkat: { type: string }
+                jabatan: { type: string }
       responses:
-        '201':
-          description: Registrasi berhasil (biasanya perlu verifikasi email / admin)
+        '200':
+          description: Aktivasi staff berhasil
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BasicEnvelope'
 
-  /users/register/krs:
+  /users/student-invitations/complete:
     post:
       tags: [Users]
-      summary: Register mahasiswa via OCR KRS (multipart + file krs)
+      summary: Selesaikan aktivasi undangan mahasiswa
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/RegisterWithKRSMultipart'
-      responses:
-        '201':
-          description: Registrasi via KRS berhasil
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/KRSPreviewEnvelope'
-
-  /users/verify-email:
-    post:
-      tags: [Users]
-      summary: Verifikasi email via token
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VerifyEmailRequest'
+              type: object
+              required: [token, password, program_studi, angkatan, kredensial]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password }
+                program_studi: { type: string }
+                angkatan: { type: integer }
+                semester_masuk_kuliah: { type: string }
+                kredensial: { type: string, format: binary }
       responses:
         '200':
-          description: Email terverifikasi
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BasicEnvelope'
-
-  /users/resend-verification:
-    post:
-      tags: [Users]
-      summary: Kirim ulang email verifikasi
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResendVerificationRequest'
-      responses:
-        '200':
-          description: Email verifikasi dikirim ulang
+          description: Aktivasi mahasiswa berhasil
           content:
             application/json:
               schema:
@@ -230,6 +210,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserListEnvelope'
+
+  /users/students/invitations:
+    post:
+      tags: [Users]
+      summary: Admin - kirim undangan mahasiswa
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, nim, email]
+              properties:
+                name: { type: string }
+                nim: { type: string }
+                email: { type: string, format: email }
+                semester_masuk_kuliah: { type: string }
+      responses:
+        '201':
+          description: Undangan mahasiswa dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/students/invitations/bulk:
+    post:
+      tags: [Users]
+      summary: Admin - impor undangan mahasiswa dari CSV/XLSX
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Hasil impor undangan mahasiswa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /users/resend-invitation/{id}:
+    post:
+      tags: [Users]
+      summary: Admin - kirim ulang email undangan
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Undangan dikirim ulang
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
 
   /users/{id}:
     patch:
@@ -340,7 +388,7 @@ paths:
   /users/staffs:
     post:
       tags: [Users]
-      summary: Admin - buat akun staff (dekan/wakil dekan)
+      summary: Admin - buat undangan akun staff (admin/atasan)
       security:
         - bearerAuth: []
       requestBody:
@@ -370,6 +418,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TemplateListEnvelope'
+
+  /letters/lettertypes:
+    get:
+      tags: [Letters]
+      summary: List jenis surat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Daftar jenis surat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
+  /letters/lettertype/{id}:
+    put:
+      tags: [Letters]
+      summary: Admin - update metadata jenis surat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                description: { type: string }
+                kode_kerja: { type: string }
+                kode_klasifikasi: { type: string }
+      responses:
+        '200':
+          description: Jenis surat diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
 
   /letters/templates/upload:
     post:
@@ -522,7 +616,7 @@ paths:
   /correspondence/forwarded:
     get:
       tags: [Correspondence]
-      summary: List surat forwarded untuk DEKAN/WAKIL_DEKAN
+      summary: List surat yang diteruskan kepada atasan
       security:
         - bearerAuth: []
       parameters:
@@ -556,6 +650,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LetterListEnvelope'
+
+  /correspondence/officials:
+    get:
+      tags: [Correspondence]
+      summary: List atasan aktif untuk tujuan disposisi
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Daftar atasan aktif
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
 
   /correspondence/drafts:
     post:
@@ -692,7 +800,7 @@ paths:
         - forward (status submitted → forwarded)
         - approve/reject pada status submitted
 
-        DEKAN/WAKIL_DEKAN:
+        ATASAN:
         - approve/reject pada status forwarded (hanya jika surat ditugaskan ke pejabat tsb)
       security:
         - bearerAuth: []
@@ -770,6 +878,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/NotificationListEnvelope'
 
+  /notifications/status:
+    get:
+      tags: [Notifications]
+      summary: Status token perangkat dan kesiapan FCM
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Status notifikasi pengguna
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicEnvelope'
+
   /notifications/{id}/read:
     patch:
       tags: [Notifications]
@@ -808,6 +930,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendTestEnvelope'
+
+  /events/stream:
+    get:
+      tags: [Events]
+      summary: Stream perubahan data melalui Server-Sent Events
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stream event SSE
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
 components:
   securitySchemes:
@@ -859,60 +995,6 @@ components:
       type: object
       properties:
         refresh_token: { type: string }
-
-    RegisterStudentMultipart:
-      type: object
-      required: [name, nim, email, password, program_studi, angkatan, kredensial]
-      properties:
-        name: { type: string }
-        nim: { type: string }
-        email: { type: string, format: email }
-        password: { type: string, minLength: 6 }
-        program_studi: { type: string }
-        angkatan: { type: integer }
-        kredensial:
-          type: string
-          format: binary
-
-    RegisterWithKRSMultipart:
-      type: object
-      required: [email, password, krs]
-      properties:
-        email: { type: string, format: email }
-        password: { type: string, minLength: 6 }
-        krs:
-          type: string
-          format: binary
-
-    KRSPreviewResponse:
-      type: object
-      required: [user_id, name, nim, program_studi, angkatan]
-      properties:
-        user_id: { type: integer }
-        name: { type: string }
-        nim: { type: string }
-        program_studi: { type: string }
-        angkatan: { type: integer }
-
-    KRSPreviewEnvelope:
-      allOf:
-        - $ref: '#/components/schemas/BasicEnvelope'
-        - type: object
-          properties:
-            data:
-              $ref: '#/components/schemas/KRSPreviewResponse'
-
-    VerifyEmailRequest:
-      type: object
-      required: [token]
-      properties:
-        token: { type: string }
-
-    ResendVerificationRequest:
-      type: object
-      required: [email]
-      properties:
-        email: { type: string, format: email }
 
     MeResponse:
       type: object
@@ -1051,7 +1133,7 @@ components:
         password: { type: string, minLength: 6 }
         role_code:
           type: string
-          enum: [ADMIN, DEKAN, WAKIL_DEKAN]
+          enum: [ADMIN, ATASAN]
         nip: { type: string, nullable: true }
         pangkat: { type: string, nullable: true }
         jabatan: { type: string, nullable: true }

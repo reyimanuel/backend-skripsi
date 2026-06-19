@@ -20,11 +20,11 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 	api := r.Group("/api")
 
 	user.RegisterRoutes(api.Group("/users"), db)
-	events.RegisterRoutes(api.Group("/events"))
 
 	protected := api.Group("/")
 	protected.Use(middleware.MiddlewareAuth)
 
+	events.RegisterRoutes(protected.Group("/events"))
 	letters.RegisterRoutes(protected.Group("/letters"), db)
 	correspondence.RegisterRoutes(protected.Group("/correspondence"), db)
 	notifications.RegisterRoutes(protected.Group("/notifications"), db)

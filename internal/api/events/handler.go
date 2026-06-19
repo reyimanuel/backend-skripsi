@@ -1,15 +1,11 @@
 package events
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/token"
 	"github.com/reyimanuel/letter-administration/internal/realtime"
 )
 
@@ -20,27 +16,6 @@ func NewHandler() *Handler {
 }
 
 func (h *Handler) Stream(ctx *gin.Context) {
-	tokenValue := strings.TrimSpace(ctx.Query("token"))
-	if tokenValue == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"status_code": http.StatusUnauthorized,
-			"message":     "Token SSE wajib diisi",
-		})
-		return
-	}
-
-	if _, err := token.ValidateAccessToken(tokenValue); err != nil {
-		message := "Token SSE tidak valid"
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			message = "Token SSE sudah kedaluwarsa"
-		}
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"status_code": http.StatusUnauthorized,
-			"message":     message,
-		})
-		return
-	}
-
 	flusher, ok := ctx.Writer.(http.Flusher)
 	if !ok {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
