@@ -50,11 +50,11 @@ type UploadAttachmentsResponse struct {
 }
 
 type ApproveLetterRequest struct {
-	Action           string `json:"action" binding:"required,oneof=approve reject forward"`
-	SignedByRole     string `json:"signed_by_role"` // compatibility field; official forwarding uses target_official_id
-	TargetOfficialID uint   `json:"target_official_id"`
-	LetterNumber     string `json:"letter_number"`
-	Notes            string `json:"notes"`
+	Action         string `json:"action" binding:"required,oneof=approve reject forward"`
+	SignedByRole   string `json:"signed_by_role"` // compatibility field; atasan forwarding uses target_atasan_id
+	TargetAtasanID uint   `json:"target_atasan_id"`
+	LetterNumber   string `json:"letter_number"`
+	Notes          string `json:"notes"`
 }
 
 type HistoryActor struct {
@@ -116,7 +116,7 @@ type StudentSummary struct {
 	NIM       string `json:"nim"`
 }
 
-type OfficialTargetItem struct {
+type AtasanTargetItem struct {
 	ID       uint   `json:"id"`
 	UserID   uint   `json:"user_id"`
 	Name     string `json:"name"`

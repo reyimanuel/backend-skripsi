@@ -645,13 +645,13 @@ paths:
           schema: { type: integer, default: 20 }
       responses:
         '200':
-          description: Daftar surat forwarded (assigned ke pejabat)
+          description: Daftar surat forwarded (assigned ke atasan)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LetterListEnvelope'
 
-  /correspondence/officials:
+  /correspondence/atasan:
     get:
       tags: [Correspondence]
       summary: List atasan aktif untuk tujuan disposisi
@@ -801,7 +801,7 @@ paths:
         - approve/reject pada status submitted
 
         ATASAN:
-        - approve/reject pada status forwarded (hanya jika surat ditugaskan ke pejabat tsb)
+        - approve/reject pada status forwarded (hanya jika surat ditugaskan ke atasan tsb)
       security:
         - bearerAuth: []
       parameters:
@@ -1020,7 +1020,7 @@ components:
         admin_verified_at: { type: string, format: date-time, nullable: true }
         rejection_reason: { type: string, nullable: true }
 
-        official_id: { type: integer, nullable: true }
+        atasan_id: { type: integer, nullable: true }
         nip: { type: string, nullable: true }
         pangkat: { type: string, nullable: true }
         jabatan: { type: string, nullable: true }
@@ -1375,8 +1375,11 @@ components:
           enum: [approve, reject, forward]
         signed_by_role:
           type: string
-          description: Wajib untuk action=forward (dekan/wakil_dekan)
-          enum: [dekan, wakil_dekan]
+          description: Role tujuan penerusan
+          enum: [ATASAN]
+        target_atasan_id:
+          type: integer
+          description: Wajib untuk action=forward
         letter_number:
           type: string
           description: Wajib untuk action=approve

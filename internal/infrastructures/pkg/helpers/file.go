@@ -353,7 +353,7 @@ func templateAutoFilledKeys() map[string]struct{} {
 		"bulan":                 {},
 		"tahun":                 {},
 		"nomor_surat":           {},
-		"official":              {},
+		"atasan":                {},
 		"nip":                   {},
 		"pangkat":               {},
 		"jabatan":               {},
@@ -526,7 +526,7 @@ const docxStudentTableDirectivePrefix = "__DOCX_STUDENT_TABLE__:"
 
 // DocxImage marks a stored server path (usually under public/...) as an image
 // that should be embedded into the generated DOCX when used as a placeholder value.
-// Example: data["tanda_tangan"] = helpers.DocxImage(official.Signature)
+// Example: data["tanda_tangan"] = helpers.DocxImage(atasan.Signature)
 func DocxImage(storedPath string) string {
 	p := strings.TrimSpace(storedPath)
 	if p == "" {

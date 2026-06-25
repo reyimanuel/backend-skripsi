@@ -20,13 +20,13 @@ var (
 	DatabaseQueryTimeout = 10 * time.Second
 )
 
-var OfficialRoleCodes = []string{
+var AtasanRoleCodes = []string{
 	"ATASAN",
 }
 
-func IsOfficialRoleCode(roleCode string) bool {
+func IsAtasanRoleCode(roleCode string) bool {
 	normalized := strings.ToUpper(strings.TrimSpace(roleCode))
-	for _, code := range OfficialRoleCodes {
+	for _, code := range AtasanRoleCodes {
 		if normalized == code {
 			return true
 		}

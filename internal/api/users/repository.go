@@ -2,7 +2,6 @@ package user
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/reyimanuel/letter-administration/internal/constants"
@@ -59,65 +58,40 @@ func (r *Repository) GetRoleByCode(tx *gorm.DB, code string) (*migration.Role, e
 	return &role, nil
 }
 
-func (r *Repository) GetActiveOfficialByRole(tx *gorm.DB, role string) (*migration.Official, error) {
-	var officials []migration.Official
-
-	// Normalize role-like input so it can match jabatan values when needed.
-	normalized := strings.ReplaceAll(role, "_", " ")
-
-	err := tx.Preload("User").
-		Where("LOWER(jabatan) = LOWER(?) AND is_active = ?", normalized, true).
-		Find(&officials).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	if len(officials) == 0 {
-		return nil, errors.New("pejabat aktif tidak ditemukan")
-	}
-
-	if len(officials) > 1 {
-		return nil, errors.New("data pejabat aktif duplikat untuk jabatan ini")
-	}
-
-	return &officials[0], nil
-}
-
-func (r *Repository) GetActiveOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
-	var official migration.Official
+func (r *Repository) GetActiveAtasanByUserID(tx *gorm.DB, userID uint) (*migration.Atasan, error) {
+	var atasan migration.Atasan
 	err := tx.Preload("User").Preload("User.Roles").
 		Where("user_id = ? AND is_active = ?", userID, true).
-		First(&official).Error
+		First(&atasan).Error
 	if err != nil {
 		return nil, err
 	}
-	return &official, nil
+	return &atasan, nil
 }
 
-func (r *Repository) GetActiveOfficialByID(tx *gorm.DB, officialID uint) (*migration.Official, error) {
-	var official migration.Official
+func (r *Repository) GetActiveAtasanByID(tx *gorm.DB, atasanID uint) (*migration.Atasan, error) {
+	var atasan migration.Atasan
 	err := tx.Preload("User").Preload("User.Roles").
-		Where("id = ? AND is_active = ?", officialID, true).
-		First(&official).Error
+		Where("id = ? AND is_active = ?", atasanID, true).
+		First(&atasan).Error
 	if err != nil {
 		return nil, err
 	}
-	return &official, nil
+	return &atasan, nil
 }
 
-func (r *Repository) ListActiveOfficials(tx *gorm.DB) ([]migration.Official, error) {
-	var officials []migration.Official
-	err := tx.Model(&migration.Official{}).
+func (r *Repository) ListActiveAtasan(tx *gorm.DB) ([]migration.Atasan, error) {
+	var atasan []migration.Atasan
+	err := tx.Model(&migration.Atasan{}).
 		Preload("User").
 		Preload("User.Roles").
-		Joins("JOIN users ON users.id = officials.user_id").
+		Joins("JOIN users ON users.id = atasan.user_id").
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
-		Where("officials.is_active = ? AND users.is_active = ? AND roles.code IN ?", true, true, constants.OfficialRoleCodes).
-		Order("officials.jabatan ASC, users.name ASC").
-		Find(&officials).Error
-	return officials, err
+		Where("atasan.is_active = ? AND users.is_active = ? AND roles.code IN ?", true, true, constants.AtasanRoleCodes).
+		Order("atasan.jabatan ASC, users.name ASC").
+		Find(&atasan).Error
+	return atasan, err
 }
 
 func (r *Repository) GetByNIM(nim string) (*migration.Student, error) {
@@ -134,15 +108,6 @@ func (r *Repository) CreateStudentWithUser(tx *gorm.DB, user *migration.User, st
 	}
 	student.UserID = user.ID
 	return tx.Create(student).Error
-}
-
-func (r *Repository) CreateOfficialWithUser(tx *gorm.DB, user *migration.User, official *migration.Official) error {
-	if err := tx.Create(user).Error; err != nil {
-		return err
-	}
-
-	official.UserID = user.ID
-	return tx.Create(official).Error
 }
 
 func baseUserQuery(tx *gorm.DB) *gorm.DB {
@@ -180,21 +145,6 @@ func (r *Repository) UpdateStudentAdminVerification(tx *gorm.DB, studentID uint,
 	return tx.Model(&migration.Student{}).Where("id = ?", studentID).Updates(updates).Error
 }
 
-func (r *Repository) SetUserEmailVerified(tx *gorm.DB, userID uint, verifiedAt time.Time) error {
-	return tx.Model(&migration.User{}).Where("id = ?", userID).Updates(map[string]any{
-		"email_verified_at":             verifiedAt,
-		"email_verification_code_hash":  "",
-		"email_verification_expires_at": nil,
-	}).Error
-}
-
-func (r *Repository) SetUserEmailVerificationCode(tx *gorm.DB, userID uint, codeHash string, expiresAt time.Time) error {
-	return tx.Model(&migration.User{}).Where("id = ?", userID).Updates(map[string]any{
-		"email_verification_code_hash":  codeHash,
-		"email_verification_expires_at": expiresAt,
-	}).Error
-}
-
 func (r *Repository) ClearStudentKredensial(tx *gorm.DB, studentID uint) error {
 	return tx.Model(&migration.Student{}).Where("id = ?", studentID).Update("kredensial_path", "").Error
 }
@@ -226,9 +176,9 @@ func (r *Repository) DeleteUser(tx *gorm.DB, userID uint) error {
 			return err
 		}
 
-		// Try deleting Official and Student profiles.
+		// Try deleting Atasan and Student profiles.
 		// If these have related data (like Letters), it will fail with 23503, which is expected.
-		if err := txTx.Where("user_id = ?", userID).Delete(&migration.Official{}).Error; err != nil {
+		if err := txTx.Where("user_id = ?", userID).Delete(&migration.Atasan{}).Error; err != nil {
 			return err
 		}
 		if err := txTx.Where("user_id = ?", userID).Delete(&migration.Student{}).Error; err != nil {
@@ -257,16 +207,16 @@ func (r *Repository) GetAllUsers(tx *gorm.DB, page, pageSize int) ([]migration.U
 	return users, total, err
 }
 
-func (r *Repository) GetOfficialByUserID(tx *gorm.DB, userID uint) (*migration.Official, error) {
-	var official migration.Official
-	if err := tx.Preload("User").Where("user_id = ?", userID).First(&official).Error; err != nil {
+func (r *Repository) GetAtasanByUserID(tx *gorm.DB, userID uint) (*migration.Atasan, error) {
+	var atasan migration.Atasan
+	if err := tx.Preload("User").Where("user_id = ?", userID).First(&atasan).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
 
-	return &official, nil
+	return &atasan, nil
 }
 
 func (r *Repository) UpsertUserDeviceToken(tx *gorm.DB, userID uint, token string, platform string, lastSeenAt time.Time) error {

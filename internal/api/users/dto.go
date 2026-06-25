@@ -83,8 +83,7 @@ type RejectStudentRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
 
-// ApproveStudentRequest optionally carries corrected student data
-// (e.g., to fix OCR ambiguities based on the uploaded KRS/KTM).
+// ApproveStudentRequest optionally carries corrected student data.
 // If a field is omitted/empty, it will not be updated.
 type ApproveStudentRequest struct {
 	Name                string `json:"name,omitempty"`
@@ -147,13 +146,13 @@ type MeResponse struct {
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
 	RejectionReason         string     `json:"rejection_reason,omitempty"`
 
-	// Official fields (only for official roles)
-	OfficialID *uint  `json:"official_id,omitempty"`
-	NIP        string `json:"nip,omitempty"`
-	Pangkat    string `json:"pangkat,omitempty"`
-	Jabatan    string `json:"jabatan,omitempty"`
-	Signature  string `json:"signature,omitempty"`
-	IsOnDuty   *bool  `json:"is_on_duty,omitempty"`
+	// Atasan fields (only for atasan roles)
+	AtasanID  *uint  `json:"atasan_id,omitempty"`
+	NIP       string `json:"nip,omitempty"`
+	Pangkat   string `json:"pangkat,omitempty"`
+	Jabatan   string `json:"jabatan,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	IsOnDuty  *bool  `json:"is_on_duty,omitempty"`
 }
 
 type CreateStaffRequest struct {

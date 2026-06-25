@@ -121,12 +121,12 @@ func (r *Repository) CountApprovedThisYear(tx *gorm.DB) (int64, error) {
 	return count, err
 }
 
-func (r *Repository) GetOfficialByID(tx *gorm.DB, officialID uint) (*migration.Official, error) {
-	var official migration.Official
-	if err := tx.Preload("User").Where("id = ?", officialID).First(&official).Error; err != nil {
+func (r *Repository) GetAtasanByID(tx *gorm.DB, atasanID uint) (*migration.Atasan, error) {
+	var atasan migration.Atasan
+	if err := tx.Preload("User").Where("id = ?", atasanID).First(&atasan).Error; err != nil {
 		return nil, err
 	}
-	return &official, nil
+	return &atasan, nil
 }
 
 func (r *Repository) IsLetterNumberUsed(tx *gorm.DB, letterNumber string, excludeLetterID uint) (bool, error) {

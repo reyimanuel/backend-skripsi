@@ -33,16 +33,16 @@ func CanStudentSubmitLetter(user *migration.User, student *migration.Student) er
 	}
 }
 
-func CanOfficialAct(user *migration.User, official *migration.Official) error {
-	if user == nil || official == nil || official.UserID != user.ID {
-		return errs.Forbidden("Data official tidak valid")
+func CanAtasanAct(user *migration.User, atasan *migration.Atasan) error {
+	if user == nil || atasan == nil || atasan.UserID != user.ID {
+		return errs.Forbidden("Data atasan tidak valid")
 	}
 
 	if user.EmailVerifiedAt == nil {
 		return errs.Forbidden("Email belum diverifikasi. Silakan verifikasi email terlebih dahulu")
 	}
 
-	if !official.IsOnDuty {
+	if !atasan.IsOnDuty {
 		return errs.Forbidden("Jabatan anda tidak aktif")
 	}
 

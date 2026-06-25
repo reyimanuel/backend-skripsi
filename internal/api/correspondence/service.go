@@ -73,7 +73,7 @@ var blockedPayloadFields = map[string]struct{}{
 	"bulan":                 {},
 	"tahun":                 {},
 	"nomor_surat":           {},
-	"official":              {},
+	"atasan":                {},
 	"nip":                   {},
 	"pangkat":               {},
 	"jabatan":               {},
@@ -95,9 +95,9 @@ var studentTemplateFields = map[string]struct{}{
 	"tahun":                 {},
 }
 
-func hasOfficialRole(roles []string) bool {
+func hasAtasanRole(roles []string) bool {
 	for _, role := range roles {
-		if constants.IsOfficialRoleCode(role) {
+		if constants.IsAtasanRoleCode(role) {
 			return true
 		}
 	}
@@ -114,28 +114,28 @@ func NewService(repo *Repository, lettersRepo *letters.Repository, usersRepo *us
 	return &Service{Repo: repo, LettersRepo: lettersRepo, UsersRepo: usersRepo}
 }
 
-func (s *Service) ListActiveOfficials() (*Response, error) {
-	var items []OfficialTargetItem
+func (s *Service) ListActiveAtasan() (*Response, error) {
+	var items []AtasanTargetItem
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		officials, err := s.UsersRepo.ListActiveOfficials(tx)
+		atasan, err := s.UsersRepo.ListActiveAtasan(tx)
 		if err != nil {
-			log.Printf("error listing active officials: %v", err)
-			return errs.InternalServerError("Gagal mengambil daftar pejabat")
+			log.Printf("error listing active atasan: %v", err)
+			return errs.InternalServerError("Gagal mengambil daftar atasan")
 		}
 
-		items = make([]OfficialTargetItem, 0, len(officials))
-		for _, official := range officials {
-			roleCode := officialRoleCode(official)
+		items = make([]AtasanTargetItem, 0, len(atasan))
+		for _, atasan := range atasan {
+			roleCode := atasanRoleCode(atasan)
 			if roleCode == "" {
 				continue
 			}
-			items = append(items, OfficialTargetItem{
-				ID:       official.ID,
-				UserID:   official.UserID,
-				Name:     official.User.Name,
+			items = append(items, AtasanTargetItem{
+				ID:       atasan.ID,
+				UserID:   atasan.UserID,
+				Name:     atasan.User.Name,
 				RoleCode: roleCode,
-				Jabatan:  strings.TrimSpace(official.Jabatan),
-				NIP:      strings.TrimSpace(official.NIP),
+				Jabatan:  strings.TrimSpace(atasan.Jabatan),
+				NIP:      strings.TrimSpace(atasan.NIP),
 			})
 		}
 		return nil
@@ -144,10 +144,10 @@ func (s *Service) ListActiveOfficials() (*Response, error) {
 		return nil, err
 	}
 
-	return &Response{StatusCode: http.StatusOK, Message: "Daftar pejabat berhasil diambil", Data: items}, nil
+	return &Response{StatusCode: http.StatusOK, Message: "Daftar atasan berhasil diambil", Data: items}, nil
 }
 
-func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOfficial bool) (string, string, error) {
+func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isAtasan bool) (string, string, error) {
 	var filePath string
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
@@ -158,13 +158,13 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOffi
 		}
 
 		if !isAdmin {
-			if isOfficial {
-				official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+			if isAtasan {
+				atasan, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
-					log.Printf("official not found for preview: user_id=%d err=%v", userID, err)
-					return errs.Forbidden("Hanya pejabat yang dapat melihat preview surat ini")
+					log.Printf("atasan not found for preview: user_id=%d err=%v", userID, err)
+					return errs.Forbidden("Hanya atasan yang dapat melihat preview surat ini")
 				}
-				if letter.SignedByID == nil || *letter.SignedByID != official.ID {
+				if letter.SignedByID == nil || *letter.SignedByID != atasan.ID {
 					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
 				}
 			} else {
@@ -206,7 +206,7 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isOffi
 }
 
 func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Response, error) {
-	// Filter by requested status, but restrict to valid official statuses.
+	// Filter by requested status, but restrict to valid atasan statuses.
 	status := strings.TrimSpace(strings.ToLower(q.Status))
 	if status != statusForwarded && status != statusApproved && status != statusSigned && status != statusRejected {
 		// Default to forwarded if invalid or empty.
@@ -262,12 +262,12 @@ func (s *Service) ListForwardedLetters(userID uint, q ListLettersQuery) (*Respon
 	var total int64
 
 	err := s.Repo.WithTx(func(tx *gorm.DB) error {
-		official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+		atasan, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 		if err != nil {
-			return errs.Forbidden("Hanya pejabat yang dapat melihat surat forwarded")
+			return errs.Forbidden("Hanya atasan yang dapat melihat surat forwarded")
 		}
 
-		signedByID := official.ID
+		signedByID := atasan.ID
 		letters, count, err := s.Repo.ListLetters(tx, ListLettersParams{
 			SignedByID:  &signedByID,
 			Query:       q.Q,
@@ -844,7 +844,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		}
 		roles := actor.RoleSlice()
 		isAdmin := slices.Contains(roles, "ADMIN")
-		isOfficialRole := hasOfficialRole(roles)
+		isAtasanRole := hasAtasanRole(roles)
 
 		letter, err := s.Repo.GetLetterWithTypeByID(tx, letterID)
 		if err != nil {
@@ -869,17 +869,17 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 					return errs.Forbidden("Hanya admin yang dapat meneruskan surat pada tahap ini")
 				}
 			case statusForwarded:
-				if !isOfficialRole {
-					return errs.Forbidden("Hanya pejabat yang dapat meneruskan surat forwarded")
+				if !isAtasanRole {
+					return errs.Forbidden("Hanya atasan yang dapat meneruskan surat forwarded")
 				}
-				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				atasanActor, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
-					return errs.Forbidden("Data pejabat tidak ditemukan")
+					return errs.Forbidden("Data atasan tidak ditemukan")
 				}
-				if letter.SignedByID == nil || *letter.SignedByID != officialActor.ID {
+				if letter.SignedByID == nil || *letter.SignedByID != atasanActor.ID {
 					return errs.Forbidden("Surat ini tidak ditugaskan kepada Anda")
 				}
-				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
+				if err := policy.CanAtasanAct(&atasanActor.User, atasanActor); err != nil {
 					return err
 				}
 			default:
@@ -895,18 +895,18 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 					return errs.BadRequest("Admin hanya dapat meneruskan atau menolak surat pada tahap ini")
 				}
 			case statusForwarded:
-				if !isOfficialRole {
-					return errs.Forbidden("Hanya pejabat yang dapat memproses surat forwarded")
+				if !isAtasanRole {
+					return errs.Forbidden("Hanya atasan yang dapat memproses surat forwarded")
 				}
-				// Ensure the forwarded letter is assigned to this official.
-				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				// Ensure the forwarded letter is assigned to this atasan.
+				atasanActor, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
-					return errs.Forbidden("Data pejabat tidak ditemukan")
+					return errs.Forbidden("Data atasan tidak ditemukan")
 				}
-				if letter.SignedByID == nil || *letter.SignedByID != officialActor.ID {
+				if letter.SignedByID == nil || *letter.SignedByID != atasanActor.ID {
 					return errs.Forbidden("Surat ini tidak ditugaskan kepada Anda")
 				}
-				if err := policy.CanOfficialAct(&officialActor.User, officialActor); err != nil {
+				if err := policy.CanAtasanAct(&atasanActor.User, atasanActor); err != nil {
 					return err
 				}
 			case statusApproved:
@@ -940,22 +940,22 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 		case "forward":
 			historyAction = historyForwarded
 			message = "Surat berhasil diteruskan"
-			official, roleCode, err := s.resolveForwardTarget(tx, req)
+			atasan, roleCode, err := s.resolveForwardTarget(tx, req)
 			if err != nil {
 				return err
 			}
-			if letter.Status == statusForwarded && letter.SignedByID != nil && *letter.SignedByID == official.ID {
-				return errs.BadRequest("Pejabat tujuan harus berbeda dari pejabat saat ini")
+			if letter.Status == statusForwarded && letter.SignedByID != nil && *letter.SignedByID == atasan.ID {
+				return errs.BadRequest("Atasan tujuan harus berbeda dari atasan saat ini")
 			}
 
-			// Move approval stage to selected official role (pending).
+			// Move approval stage to selected atasan role (pending).
 			role, err := s.UsersRepo.GetRoleByCode(tx, roleCode)
 			if err != nil {
 				return errs.InternalServerError("Gagal memvalidasi role penandatangan")
 			}
 
 			letter.Status = statusForwarded
-			letter.SignedByID = &official.ID
+			letter.SignedByID = &atasan.ID
 			approval.RoleID = role.ID
 			approval.Status = approvalPending
 			approval.ApproverID = nil
@@ -965,13 +965,13 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 
 		case "approve":
 			if letter.Status == statusForwarded {
-				officialActor, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+				atasanActor, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
-					return errs.Forbidden("Data pejabat tidak ditemukan")
+					return errs.Forbidden("Data atasan tidak ditemukan")
 				}
 
 				letter.Status = statusApproved
-				letter.SignedByID = &officialActor.ID
+				letter.SignedByID = &atasanActor.ID
 				letter.SignedAt = nil
 				approval.Status = approvalApproved
 				approval.ApproverID = &userID
@@ -995,12 +995,12 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				return errs.BadRequest("Nomor surat sudah digunakan")
 			}
 			if letter.SignedByID == nil {
-				return errs.BadRequest("Pejabat penandatangan belum tersedia")
+				return errs.BadRequest("Atasan penandatangan belum tersedia")
 			}
-			official, err := s.Repo.GetOfficialByID(tx, *letter.SignedByID)
+			atasan, err := s.Repo.GetAtasanByID(tx, *letter.SignedByID)
 			if err != nil {
-				log.Printf("approved official not found: official_id=%d err=%v", *letter.SignedByID, err)
-				return errs.NotFound("Pejabat penandatangan tidak ditemukan")
+				log.Printf("approved atasan not found: atasan_id=%d err=%v", *letter.SignedByID, err)
+				return errs.NotFound("Atasan penandatangan tidak ditemukan")
 			}
 
 			template, err := s.Repo.GetTemplateByLetterType(tx, letter.LetterTypeID)
@@ -1016,7 +1016,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
 			}
 
-			payloadMap = buildApprovedPayload(payloadMap, nomorSurat, official)
+			payloadMap = buildApprovedPayload(payloadMap, nomorSurat, atasan)
 			payloadJSON, err := marshalPayload(payloadMap)
 			if err != nil {
 				log.Printf("error marshaling approved payload: %v", err)
@@ -1025,7 +1025,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 
 			output := fmt.Sprintf("public/generated/final_%d.docx", letter.ID)
 			data := buildTemplateData(student, payloadMap)
-			addOfficialTemplateData(data, official)
+			addAtasanTemplateData(data, atasan)
 			imageKeys := templateImagePlaceholderKeys(templatePlaceholders)
 			if len(imageKeys) > 0 {
 				atts, err := s.Repo.GetAttachmentsByLetterID(tx, letterID)
@@ -1042,7 +1042,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 			letter.FilePath = output
 			letter.Payload = payloadJSON
 			letter.LetterNumber = &nomorSurat
-			letter.SignedByID = &official.ID
+			letter.SignedByID = &atasan.ID
 			letter.SignedAt = &now
 
 			notificationNotes = req.Notes
@@ -1086,7 +1086,7 @@ func (s *Service) ReviewLetter(letterID uint, userID uint, req ApproveLetterRequ
 				body = fmt.Sprintf("Surat '%s' telah diberi nomor dan ditandatangani", subject)
 				nType = "letter_signed"
 			} else {
-				title = "Surat Disetujui Pejabat"
+				title = "Surat Disetujui Atasan"
 				body = fmt.Sprintf("Surat '%s' telah disetujui dan menunggu nomor surat", subject)
 				nType = "letter_approved"
 			}
@@ -1213,7 +1213,7 @@ func (s *Service) DeleteLetter(letterID uint, userID uint, isAdmin bool) (*Respo
 	return &Response{StatusCode: http.StatusOK, Message: "Surat berhasil dihapus"}, nil
 }
 
-func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, isOfficial bool) (*Response, error) {
+func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, isAtasan bool) (*Response, error) {
 	var out []LetterHistoryItem
 	var detail LetterHistoryDetail
 
@@ -1227,12 +1227,12 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 		}
 
 		if !isAdmin {
-			if isOfficial {
-				official, err := s.UsersRepo.GetActiveOfficialByUserID(tx, userID)
+			if isAtasan {
+				atasan, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
-					return errs.Forbidden("Hanya pejabat yang dapat melihat riwayat surat ini")
+					return errs.Forbidden("Hanya atasan yang dapat melihat riwayat surat ini")
 				}
-				if letter.SignedByID == nil || *letter.SignedByID != official.ID {
+				if letter.SignedByID == nil || *letter.SignedByID != atasan.ID {
 					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
 				}
 			} else {
@@ -1485,29 +1485,29 @@ func parseTimeOrDate(value string) (time.Time, error) {
 
 // private helpers
 
-func (s *Service) resolveForwardTarget(tx *gorm.DB, req ApproveLetterRequest) (*migration.Official, string, error) {
-	if req.TargetOfficialID != 0 {
-		official, err := s.UsersRepo.GetActiveOfficialByID(tx, req.TargetOfficialID)
+func (s *Service) resolveForwardTarget(tx *gorm.DB, req ApproveLetterRequest) (*migration.Atasan, string, error) {
+	if req.TargetAtasanID != 0 {
+		atasan, err := s.UsersRepo.GetActiveAtasanByID(tx, req.TargetAtasanID)
 		if err != nil {
-			return nil, "", errs.NotFound("Pejabat tujuan tidak ditemukan atau tidak aktif")
+			return nil, "", errs.NotFound("Atasan tujuan tidak ditemukan atau tidak aktif")
 		}
-		if err := policy.CanOfficialAct(&official.User, official); err != nil {
+		if err := policy.CanAtasanAct(&atasan.User, atasan); err != nil {
 			return nil, "", err
 		}
-		roleCode := officialRoleCode(*official)
+		roleCode := atasanRoleCode(*atasan)
 		if roleCode == "" {
-			return nil, "", errs.BadRequest("Pejabat tujuan tidak memiliki role pejabat yang valid")
+			return nil, "", errs.BadRequest("Atasan tujuan tidak memiliki role atasan yang valid")
 		}
-		return official, roleCode, nil
+		return atasan, roleCode, nil
 	}
 
 	return nil, "", errs.BadRequest("Atasan tujuan wajib dipilih")
 }
 
-func officialRoleCode(official migration.Official) string {
-	for _, role := range official.User.Roles {
+func atasanRoleCode(atasan migration.Atasan) string {
+	for _, role := range atasan.User.Roles {
 		code := strings.ToUpper(strings.TrimSpace(role.Code))
-		if constants.IsOfficialRoleCode(code) {
+		if constants.IsAtasanRoleCode(code) {
 			return code
 		}
 	}
@@ -1626,7 +1626,7 @@ func validateReviewLetterRequest(req ApproveLetterRequest) error {
 	if req.Action == "reject" && len([]rune(notes)) < 10 {
 		return errs.BadRequest("Catatan penolakan minimal 10 karakter")
 	}
-	if req.Action == "forward" && req.TargetOfficialID == 0 {
+	if req.Action == "forward" && req.TargetAtasanID == 0 {
 		return errs.BadRequest("Atasan tujuan wajib dipilih")
 	}
 	return nil
@@ -1792,31 +1792,31 @@ func (s *Service) ensureAttachmentKeysPresent(tx *gorm.DB, letterID uint, keys [
 	return nil
 }
 
-func buildApprovedPayload(payload map[string]any, letterNumber string, official *migration.Official) map[string]any {
+func buildApprovedPayload(payload map[string]any, letterNumber string, atasan *migration.Atasan) map[string]any {
 	enriched := copyPayload(payload, nil)
 
 	ensureLetterSystemPayload(enriched)
 
 	enriched["nomor_surat"] = letterNumber
-	enriched["official"] = official.User.Name
-	enriched["nip"] = official.NIP
-	enriched["pangkat"] = official.Pangkat
-	enriched["jabatan"] = official.Jabatan
+	enriched["atasan"] = atasan.User.Name
+	enriched["nip"] = atasan.NIP
+	enriched["pangkat"] = atasan.Pangkat
+	enriched["jabatan"] = atasan.Jabatan
 
 	return enriched
 }
 
-func addOfficialTemplateData(data map[string]string, official *migration.Official) {
-	if data == nil || official == nil {
+func addAtasanTemplateData(data map[string]string, atasan *migration.Atasan) {
+	if data == nil || atasan == nil {
 		return
 	}
-	data["official"] = official.User.Name
-	data["nip"] = official.NIP
-	data["pangkat"] = official.Pangkat
-	data["jabatan"] = official.Jabatan
-	data["ttd"] = official.User.Name
-	data["tanda_tangan"] = helpers.DocxImage(official.Signature)
-	data["signature"] = helpers.DocxImage(official.Signature)
+	data["atasan"] = atasan.User.Name
+	data["nip"] = atasan.NIP
+	data["pangkat"] = atasan.Pangkat
+	data["jabatan"] = atasan.Jabatan
+	data["ttd"] = atasan.User.Name
+	data["tanda_tangan"] = helpers.DocxImage(atasan.Signature)
+	data["signature"] = helpers.DocxImage(atasan.Signature)
 }
 
 func additionalStudentRowsFromPayload(payload map[string]any) []helpers.DocxStudentTableRow {

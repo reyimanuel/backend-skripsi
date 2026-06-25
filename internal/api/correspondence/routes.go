@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func adminAndOfficialRoles() []string {
-	return append([]string{"ADMIN"}, constants.OfficialRoleCodes...)
+func adminAndAtasanRoles() []string {
+	return append([]string{"ADMIN"}, constants.AtasanRoleCodes...)
 }
 
 func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
@@ -19,14 +19,14 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	handler := NewHandler(service)
 
 	r.GET("/letters", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.ListLetters)
-	r.GET("/forwarded", middleware.MiddlewareRole(constants.OfficialRoleCodes...), handler.ListForwardedLetters)
-	r.GET("/officials", middleware.MiddlewareRole(adminAndOfficialRoles()...), handler.ListActiveOfficials)
+	r.GET("/forwarded", middleware.MiddlewareRole(constants.AtasanRoleCodes...), handler.ListForwardedLetters)
+	r.GET("/atasan", middleware.MiddlewareRole(adminAndAtasanRoles()...), handler.ListActiveAtasan)
 	r.POST("/drafts", middleware.MiddlewareRole("MAHASISWA"), handler.CreateDraftLetter)
 	r.PATCH("/drafts/:id", middleware.MiddlewareRole("MAHASISWA"), handler.UpdateDraftLetter)
 	r.POST("/submit/:id", middleware.MiddlewareRole("MAHASISWA"), handler.SubmitDraftLetter)
 	r.DELETE("/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.DeleteLetter)
-	r.GET("/preview/:id", middleware.MiddlewareRole(append([]string{"MAHASISWA"}, adminAndOfficialRoles()...)...), handler.PreviewLetter)
-	r.GET("/history/:id", middleware.MiddlewareRole(append([]string{"MAHASISWA"}, adminAndOfficialRoles()...)...), handler.GetHistoryAndDetail)
-	r.PATCH("/approve/:id", middleware.MiddlewareRole(adminAndOfficialRoles()...), handler.ReviewLetter)
+	r.GET("/preview/:id", middleware.MiddlewareRole(append([]string{"MAHASISWA"}, adminAndAtasanRoles()...)...), handler.PreviewLetter)
+	r.GET("/history/:id", middleware.MiddlewareRole(append([]string{"MAHASISWA"}, adminAndAtasanRoles()...)...), handler.GetHistoryAndDetail)
+	r.PATCH("/approve/:id", middleware.MiddlewareRole(adminAndAtasanRoles()...), handler.ReviewLetter)
 	r.POST("/attachments/:id", middleware.MiddlewareRole("MAHASISWA", "ADMIN"), handler.UploadAttachments)
 }

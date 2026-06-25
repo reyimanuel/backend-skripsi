@@ -10,7 +10,7 @@ var Models = []any{
 	User{},
 	UserDeviceToken{},
 	UserNotification{},
-	Official{},
+	Atasan{},
 	Role{},
 	UserRole{},
 	Student{},
@@ -23,17 +23,15 @@ var Models = []any{
 }
 
 type User struct {
-	ID                         uint       `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
-	Name                       string     `gorm:"column:name;not null"`
-	Email                      string     `gorm:"column:email;uniqueIndex;not null"`
-	Password                   string     `gorm:"column:password;not null"`
-	ProfilePhoto               *string    `gorm:"column:profile_photo;size:255"`
-	CreatedAt                  time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt                  time.Time  `gorm:"column:updated_at;autoUpdateTime"`
-	EmailVerifiedAt            *time.Time `gorm:"column:email_verified_at;index"`
-	EmailVerificationCodeHash  string     `gorm:"column:email_verification_code_hash;size:255"`
-	EmailVerificationExpiresAt *time.Time `gorm:"column:email_verification_expires_at;index"`
-	IsActive                   bool       `gorm:"column:is_active;not null;default:true"`
+	ID              uint       `gorm:"column:id;primaryKey;autoIncrement;not null;<-create"`
+	Name            string     `gorm:"column:name;not null"`
+	Email           string     `gorm:"column:email;uniqueIndex;not null"`
+	Password        string     `gorm:"column:password;not null"`
+	ProfilePhoto    *string    `gorm:"column:profile_photo;size:255"`
+	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	EmailVerifiedAt *time.Time `gorm:"column:email_verified_at;index"`
+	IsActive        bool       `gorm:"column:is_active;not null;default:true"`
 
 	Roles   []Role   `gorm:"many2many:user_roles;"`
 	Student *Student `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
@@ -66,16 +64,20 @@ type UserNotification struct {
 	User User `gorm:"constraint:OnDelete:CASCADE;"`
 }
 
-type Official struct {
+type Atasan struct {
 	ID        uint   `gorm:"primaryKey"`
 	UserID    uint   `gorm:"not null"`
 	NIP       string `gorm:"size:50"`
 	Pangkat   string `gorm:"size:100"`
 	Jabatan   string `gorm:"size:100"`                      // Dean, Vice Dean, etc.
 	Signature string `gorm:"size:255"`                      // path to signature image
-	IsOnDuty  bool   `gorm:"column:is_active;default:true"` // if the official is still active on duty
+	IsOnDuty  bool   `gorm:"column:is_active;default:true"` // if the atasan is still active on duty
 
 	User User `gorm:"constraint:OnDelete:CASCADE;"`
+}
+
+func (Atasan) TableName() string {
+	return "atasan"
 }
 
 type UserRole struct {
@@ -139,7 +141,7 @@ type Letter struct {
 	// draft, submitted, forwarded, approved, signed, rejected
 
 	SignedByID *uint
-	SignedBy   *Official `gorm:"foreignKey:SignedByID"`
+	SignedBy   *Atasan `gorm:"foreignKey:SignedByID"`
 	SignedAt   *time.Time
 
 	FilePath string `gorm:"size:255"`

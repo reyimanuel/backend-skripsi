@@ -3,12 +3,10 @@ package helpers
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -206,48 +204,6 @@ func dialSMTPClient(host string, port string) (*smtp.Client, bool, error) {
 	}
 
 	return client, isTLS, nil
-}
-
-func GenerateEmailVerificationCode() (string, error) {
-	value, err := rand.Int(rand.Reader, big.NewInt(100000))
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%05d", value.Int64()), nil
-}
-
-func SendVerificationEmail(email string, name string, code string) error {
-	body := fmt.Sprintf(
-		"Halo %s,\n\nKode verifikasi email akun Anda adalah:\n\n%s\n\nKode ini berlaku selama 15 menit. Jika Anda tidak merasa mendaftar, abaikan email ini.",
-		name,
-		code,
-	)
-
-	err := SendEmail(email, "Verifikasi Email Akun", body)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// SendVerificationEmailWithContext sends a verification email with context timeout
-func SendVerificationEmailWithContext(ctx context.Context, email string, name string, code string) error {
-	// Wrap the email sending in a timeout context
-	sendCtx, cancel := context.WithTimeout(ctx, constants.EmailTimeout)
-	defer cancel()
-
-	// Use a channel to handle the asynchronous operation
-	resultChan := make(chan error, 1)
-	go func() {
-		resultChan <- SendVerificationEmail(email, name, code)
-	}()
-
-	select {
-	case <-sendCtx.Done():
-		return fmt.Errorf("email sending timed out after %v", constants.EmailTimeout)
-	case err := <-resultChan:
-		return err
-	}
 }
 
 func SendStaffInvitationEmail(email string, name string, invitedBy string, invitationLink string) error {

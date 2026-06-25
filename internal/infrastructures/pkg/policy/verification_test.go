@@ -36,21 +36,21 @@ func TestCanStudentSubmitLetter_Approved_Succeeds(t *testing.T) {
 	}
 }
 
-func TestCanOfficialAct_EmailUnverified_Fails(t *testing.T) {
-	official := &migration.Official{ID: 2, UserID: 20, IsOnDuty: true}
+func TestCanAtasanAct_EmailUnverified_Fails(t *testing.T) {
+	atasan := &migration.Atasan{ID: 2, UserID: 20, IsOnDuty: true}
 	user := &migration.User{ID: 20, IsActive: true, EmailVerifiedAt: nil}
 
-	if err := CanOfficialAct(user, official); err == nil {
-		t.Fatalf("expected error for official with unverified email")
+	if err := CanAtasanAct(user, atasan); err == nil {
+		t.Fatalf("expected error for atasan with unverified email")
 	}
 }
 
-func TestCanOfficialAct_ActiveAndVerified_Succeeds(t *testing.T) {
+func TestCanAtasanAct_ActiveAndVerified_Succeeds(t *testing.T) {
 	now := time.Now()
-	official := &migration.Official{ID: 2, UserID: 20, IsOnDuty: true}
+	atasan := &migration.Atasan{ID: 2, UserID: 20, IsOnDuty: true}
 	user := &migration.User{ID: 20, IsActive: true, EmailVerifiedAt: &now}
 
-	if err := CanOfficialAct(user, official); err != nil {
+	if err := CanAtasanAct(user, atasan); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }

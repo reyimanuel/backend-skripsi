@@ -507,14 +507,14 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 	}
 
 	isStudent := false
-	isOfficial := false
+	isAtasan := false
 	for _, role := range usr.Roles {
 		if strings.EqualFold(role.Code, "MAHASISWA") {
 			isStudent = true
 			continue
 		}
-		if constants.IsOfficialRoleCode(role.Code) {
-			isOfficial = true
+		if constants.IsAtasanRoleCode(role.Code) {
+			isAtasan = true
 		}
 	}
 
@@ -558,22 +558,22 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		resp.RejectionReason = student.RejectionReason
 	}
 
-	if isOfficial {
-		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, usr.ID)
+	if isAtasan {
+		atasan, err := s.Repo.GetAtasanByUserID(s.Repo.DB, usr.ID)
 		if err != nil {
-			log.Printf("error getting official profile: user_id=%d err=%v", usr.ID, err)
-			return nil, errs.InternalServerError("gagal mengambil data official")
+			log.Printf("error getting atasan profile: user_id=%d err=%v", usr.ID, err)
+			return nil, errs.InternalServerError("gagal mengambil data atasan")
 		}
-		if official == nil {
-			return nil, errs.NotFound("data official tidak ditemukan")
+		if atasan == nil {
+			return nil, errs.NotFound("data atasan tidak ditemukan")
 		}
 
-		onDuty := official.IsOnDuty
-		resp.OfficialID = &official.ID
-		resp.NIP = official.NIP
-		resp.Pangkat = official.Pangkat
-		resp.Jabatan = official.Jabatan
-		resp.Signature = helpers.ToAbsoluteURL(official.Signature)
+		onDuty := atasan.IsOnDuty
+		resp.AtasanID = &atasan.ID
+		resp.NIP = atasan.NIP
+		resp.Pangkat = atasan.Pangkat
+		resp.Jabatan = atasan.Jabatan
+		resp.Signature = helpers.ToAbsoluteURL(atasan.Signature)
 		resp.IsOnDuty = &onDuty
 	}
 
@@ -768,10 +768,8 @@ func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest
 	now := time.Now()
 	err = s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		if err := s.Repo.UpdateUserFields(tx, usr.ID, map[string]any{
-			"password":                      hashedPwd,
-			"email_verified_at":             now,
-			"email_verification_code_hash":  "",
-			"email_verification_expires_at": nil,
+			"password":          hashedPwd,
+			"email_verified_at": now,
 		}); err != nil {
 			log.Printf("error activating invited student user: user_id=%d err=%v", usr.ID, err)
 			return errs.InternalServerError("gagal mengaktifkan akun mahasiswa")
@@ -830,7 +828,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 		return nil, errs.BadRequest("jabatan wajib diisi untuk role atasan")
 	}
 	if roleCode == "ATASAN" && jabatan != "" {
-		normalizedJabatan, ok := normalizeOfficialJabatan(jabatan)
+		normalizedJabatan, ok := normalizeAtasanJabatan(jabatan)
 		if !ok {
 			return nil, errs.BadRequest("jabatan harus salah satu dari: Dekan, Wakil Dekan 1, Wakil Dekan 2, Wakil Dekan 3, Koprodi, Kabag, Kajur")
 		}
@@ -868,7 +866,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 		}
 	}
 
-	isOfficialRole := constants.IsOfficialRoleCode(roleCode)
+	isAtasanRole := constants.IsAtasanRoleCode(roleCode)
 
 	roles := []migration.Role{*role}
 
@@ -885,17 +883,17 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 			return err
 		}
 
-		if !isOfficialRole {
+		if !isAtasanRole {
 			return nil
 		}
 
-		official := &migration.Official{
+		atasan := &migration.Atasan{
 			UserID:   user.ID,
 			Jabatan:  jabatan,
 			IsOnDuty: true,
 		}
 
-		return tx.Create(official).Error
+		return tx.Create(atasan).Error
 	})
 	if createErr != nil {
 		log.Printf("error creating staff by admin %d: %v", adminID, createErr)
@@ -965,7 +963,7 @@ func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error)
 	roleCode := ""
 	for _, role := range roles {
 		normalized := strings.ToUpper(strings.TrimSpace(role))
-		if normalized == "ADMIN" || constants.IsOfficialRoleCode(normalized) {
+		if normalized == "ADMIN" || constants.IsAtasanRoleCode(normalized) {
 			roleCode = normalized
 			break
 		}
@@ -1038,9 +1036,9 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 	}
 
 	roleCode := strings.ToUpper(strings.TrimSpace(invitation.RoleCode))
-	isOfficialRole := constants.IsOfficialRoleCode(roleCode)
+	isAtasanRole := constants.IsAtasanRoleCode(roleCode)
 	signaturePath := ""
-	if isOfficialRole {
+	if isAtasanRole {
 		nip := strings.TrimSpace(req.NIP)
 		if nip == "" {
 			return nil, errs.BadRequest("NIP wajib diisi")
@@ -1080,8 +1078,8 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 	nip := strings.TrimSpace(req.NIP)
 	pangkat := strings.TrimSpace(req.Pangkat)
 	jabatan := strings.TrimSpace(req.Jabatan)
-	if isOfficialRole && jabatan != "" {
-		normalizedJabatan, ok := normalizeOfficialJabatan(jabatan)
+	if isAtasanRole && jabatan != "" {
+		normalizedJabatan, ok := normalizeAtasanJabatan(jabatan)
 		if !ok {
 			if signaturePath != "" {
 				_ = os.Remove(signaturePath)
@@ -1090,9 +1088,9 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 		}
 		jabatan = normalizedJabatan
 	}
-	if isOfficialRole && jabatan == "" {
-		if existingOfficial, err := s.Repo.GetOfficialByUserID(s.Repo.DB, usr.ID); err == nil && existingOfficial != nil {
-			jabatan = strings.TrimSpace(existingOfficial.Jabatan)
+	if isAtasanRole && jabatan == "" {
+		if existingAtasan, err := s.Repo.GetAtasanByUserID(s.Repo.DB, usr.ID); err == nil && existingAtasan != nil {
+			jabatan = strings.TrimSpace(existingAtasan.Jabatan)
 		}
 		if jabatan == "" {
 			jabatan = defaultStaffJabatan(roleCode)
@@ -1120,22 +1118,20 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 	now := time.Now()
 	err = s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		if err := s.Repo.UpdateUserFields(tx, usr.ID, map[string]any{
-			"password":                      passwordHash,
-			"email_verified_at":             now,
-			"email_verification_code_hash":  "",
-			"email_verification_expires_at": nil,
+			"password":          passwordHash,
+			"email_verified_at": now,
 		}); err != nil {
 			log.Printf("error activating staff user: user_id=%d err=%v", usr.ID, err)
 			return errs.InternalServerError("gagal mengaktifkan akun staff")
 		}
 
-		if !isOfficialRole && signaturePath == "" && nip == "" && pangkat == "" && jabatan == "" {
+		if !isAtasanRole && signaturePath == "" && nip == "" && pangkat == "" && jabatan == "" {
 			return nil
 		}
 
-		official, err := s.Repo.GetOfficialByUserID(tx, usr.ID)
+		atasan, err := s.Repo.GetAtasanByUserID(tx, usr.ID)
 		if err != nil {
-			log.Printf("error fetching official during staff activation: user_id=%d err=%v", usr.ID, err)
+			log.Printf("error fetching atasan during staff activation: user_id=%d err=%v", usr.ID, err)
 			return errs.InternalServerError("gagal memproses data jabatan staff")
 		}
 
@@ -1149,15 +1145,15 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 			updates["signature"] = signaturePath
 		}
 
-		if official != nil {
-			if err := tx.Model(&migration.Official{}).Where("id = ?", official.ID).Updates(updates).Error; err != nil {
-				log.Printf("error updating official during staff activation: user_id=%d err=%v", usr.ID, err)
+		if atasan != nil {
+			if err := tx.Model(&migration.Atasan{}).Where("id = ?", atasan.ID).Updates(updates).Error; err != nil {
+				log.Printf("error updating atasan during staff activation: user_id=%d err=%v", usr.ID, err)
 				return errs.InternalServerError("gagal memperbarui data jabatan staff")
 			}
 			return nil
 		}
 
-		official = &migration.Official{
+		atasan = &migration.Atasan{
 			UserID:    usr.ID,
 			NIP:       nip,
 			Pangkat:   pangkat,
@@ -1165,8 +1161,8 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 			Signature: signaturePath,
 			IsOnDuty:  true,
 		}
-		if err := tx.Create(official).Error; err != nil {
-			log.Printf("error creating official during staff activation: user_id=%d err=%v", usr.ID, err)
+		if err := tx.Create(atasan).Error; err != nil {
+			log.Printf("error creating atasan during staff activation: user_id=%d err=%v", usr.ID, err)
 			return errs.InternalServerError("gagal menyimpan data jabatan staff")
 		}
 		return nil
@@ -1298,7 +1294,7 @@ func defaultStaffJabatan(roleCode string) string {
 	}
 }
 
-func normalizeOfficialJabatan(value string) (string, bool) {
+func normalizeAtasanJabatan(value string) (string, bool) {
 	normalized := strings.ToUpper(strings.Join(strings.Fields(value), " "))
 	normalized = strings.ReplaceAll(normalized, ".", "")
 	switch normalized {
@@ -1409,14 +1405,14 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 	}
 
 	isStudent := false
-	isOfficial := false
+	isAtasan := false
 	for _, role := range user.Roles {
 		if strings.EqualFold(role.Code, "MAHASISWA") {
 			isStudent = true
 			continue
 		}
-		if constants.IsOfficialRoleCode(role.Code) {
-			isOfficial = true
+		if constants.IsAtasanRoleCode(role.Code) {
+			isAtasan = true
 		}
 	}
 
@@ -1438,13 +1434,13 @@ func (s *Service) ensureLoginEligibility(user *migration.User) error {
 		}
 	}
 
-	if isOfficial {
-		official, err := s.Repo.GetOfficialByUserID(s.Repo.DB, user.ID)
+	if isAtasan {
+		atasan, err := s.Repo.GetAtasanByUserID(s.Repo.DB, user.ID)
 		if err != nil {
-			log.Printf("error fetching official data for login eligibility: user_id=%d err=%v", user.ID, err)
-			return errs.InternalServerError("Gagal memvalidasi status official")
+			log.Printf("error fetching atasan data for login eligibility: user_id=%d err=%v", user.ID, err)
+			return errs.InternalServerError("Gagal memvalidasi status atasan")
 		}
-		if err := policy.CanOfficialAct(user, official); err != nil {
+		if err := policy.CanAtasanAct(user, atasan); err != nil {
 			return errs.Unauthorized(err.Error())
 		}
 	}

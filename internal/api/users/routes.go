@@ -21,11 +21,11 @@ func RegisterRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	}
 
 	// Public routes - invitation completion with moderate rate limiting
-	publicReg := r.Group("")
-	publicReg.Use(middleware.IPBasedLimiter(20, 20, 1*time.Hour)) // 20 requests per hour for invitation completion
+	publicInvitations := r.Group("")
+	publicInvitations.Use(middleware.IPBasedLimiter(20, 20, 1*time.Hour)) // 20 requests per hour for invitation completion
 	{
-		publicReg.POST("/staff-invitations/complete", handler.CompleteStaffInvitation)
-		publicReg.POST("/student-invitations/complete", handler.CompleteStudentInvitation)
+		publicInvitations.POST("/staff-invitations/complete", handler.CompleteStaffInvitation)
+		publicInvitations.POST("/student-invitations/complete", handler.CompleteStudentInvitation)
 	}
 
 	// Protected routes (require authentication)

@@ -16,7 +16,7 @@ type SeedTargets struct {
 	Roles       bool
 	Users       bool
 	Students    bool
-	Officials   bool
+	Atasan      bool
 	LetterTypes bool
 	Templates   bool
 
@@ -26,10 +26,10 @@ type SeedTargets struct {
 
 func (t *SeedTargets) Normalize() {
 	// Dependencies.
-	if t.Users || t.Students || t.Officials || t.Templates {
+	if t.Users || t.Students || t.Atasan || t.Templates {
 		t.Roles = true
 	}
-	if t.Students || t.Officials || t.Templates {
+	if t.Students || t.Atasan || t.Templates {
 		t.Users = true
 	}
 	if t.Templates {
@@ -41,7 +41,7 @@ func (t *SeedTargets) Normalize() {
 //
 // Notes:
 //   - Some targets expand into closely related datasets for convenience.
-//     For example, "users" also enables seeding student + official records that
+//     For example, "users" also enables seeding student + atasan records that
 //     depend on users.
 //   - Dependency normalization is handled by SeedTargets.Normalize().
 //
@@ -52,7 +52,7 @@ func (t *SeedTargets) Normalize() {
 func ParseSeedTargets(spec string) (SeedTargets, error) {
 	spec = strings.ToLower(strings.TrimSpace(spec))
 	if spec == "" || spec == "all" {
-		t := SeedTargets{Users: true, Students: true, Officials: true, LetterTypes: true, Templates: true}
+		t := SeedTargets{Users: true, Students: true, Atasan: true, LetterTypes: true, Templates: true}
 		t.Normalize()
 		return t, nil
 	}
@@ -70,7 +70,7 @@ func ParseSeedTargets(spec string) (SeedTargets, error) {
 			t.Roles = true
 			t.Users = true
 			t.Students = true
-			t.Officials = true
+			t.Atasan = true
 		case "templates", "template":
 			t.Templates = true
 			t.LetterTypes = true
@@ -151,7 +151,7 @@ func SeedSelected(db *gorm.DB, force bool, targets SeedTargets) error {
 					letters,
 					letter_templates,
 					letter_types,
-					officials,
+					atasan,
 					students,
 					user_roles,
 					users,
@@ -202,11 +202,11 @@ func SeedSelected(db *gorm.DB, force bool, targets SeedTargets) error {
 			}
 		}
 
-		if targets.Officials {
+		if targets.Atasan {
 			if users == nil {
-				return fmt.Errorf("officials seeding requires users")
+				return fmt.Errorf("atasan seeding requires users")
 			}
-			if err := ensureOfficials(tx, users, signaturePath); err != nil {
+			if err := ensureAtasan(tx, users, signaturePath); err != nil {
 				return err
 			}
 		}
@@ -421,7 +421,7 @@ func ensureStudent(tx *gorm.DB, users *seededUsers, now time.Time) error {
 	}).Error
 }
 
-func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) error {
+func ensureAtasan(tx *gorm.DB, users *seededUsers, signaturePath string) error {
 	if users == nil ||
 		users.Admin == nil ||
 		users.Dekan == nil ||
@@ -431,10 +431,10 @@ func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) erro
 		users.Koprodi == nil ||
 		users.Kabag == nil ||
 		users.Kajur == nil {
-		return fmt.Errorf("officials seeding requires admin and all seeded atasan users")
+		return fmt.Errorf("atasan seeding requires admin and all seeded atasan users")
 	}
 
-	officials := []Official{
+	atasan := []Atasan{
 		{
 			UserID:    users.Dekan.ID,
 			NIP:       "196501011990031001",
@@ -501,8 +501,8 @@ func ensureOfficials(tx *gorm.DB, users *seededUsers, signaturePath string) erro
 		},
 	}
 
-	for _, o := range officials {
-		var existing Official
+	for _, o := range atasan {
+		var existing Atasan
 		err := tx.Where("user_id = ?", o.UserID).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if err := tx.Create(&o).Error; err != nil {

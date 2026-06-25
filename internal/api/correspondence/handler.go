@@ -152,8 +152,8 @@ func (h *Handler) ReviewLetter(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func (h *Handler) ListActiveOfficials(ctx *gin.Context) {
-	response, err := h.Service.ListActiveOfficials()
+func (h *Handler) ListActiveAtasan(ctx *gin.Context) {
+	response, err := h.Service.ListActiveAtasan()
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -189,8 +189,8 @@ func (h *Handler) PreviewLetter(ctx *gin.Context) {
 	}
 
 	isAdmin := slices.Contains(claims.Roles, "ADMIN")
-	isOfficial := hasOfficialClaimRole(claims.Roles)
-	pdfPath, fileName, err := h.Service.PreviewLetter(uint(letterID), userID, isAdmin, isOfficial)
+	isAtasan := hasAtasanClaimRole(claims.Roles)
+	pdfPath, fileName, err := h.Service.PreviewLetter(uint(letterID), userID, isAdmin, isAtasan)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -272,8 +272,8 @@ func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 	}
 
 	isAdmin := slices.Contains(claims.Roles, "ADMIN")
-	isOfficial := hasOfficialClaimRole(claims.Roles)
-	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, isAdmin, isOfficial)
+	isAtasan := hasAtasanClaimRole(claims.Roles)
+	response, err := h.Service.GetHistoryAndDetail(uint(letterID), userID, isAdmin, isAtasan)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
@@ -282,9 +282,9 @@ func (h *Handler) GetHistoryAndDetail(ctx *gin.Context) {
 	ctx.JSON(response.StatusCode, response)
 }
 
-func hasOfficialClaimRole(roles []string) bool {
+func hasAtasanClaimRole(roles []string) bool {
 	for _, role := range roles {
-		if constants.IsOfficialRoleCode(role) {
+		if constants.IsAtasanRoleCode(role) {
 			return true
 		}
 	}
