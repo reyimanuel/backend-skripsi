@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/mail"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/reyimanuel/letter-administration/internal/infrastructures/pkg/errs"
@@ -42,6 +43,8 @@ func (s *Service) BulkImportStudentInvitations(adminID uint, file *multipart.Fil
 			Name:                row.Name,
 			NIM:                 row.NIM,
 			Email:               row.Email,
+			ProgramStudi:        row.ProgramStudi,
+			Angkatan:            row.Angkatan,
 			SemesterMasukKuliah: row.SemesterMasukKuliah,
 		}
 
@@ -56,6 +59,8 @@ func (s *Service) BulkImportStudentInvitations(adminID uint, file *multipart.Fil
 			Name:                row.Name,
 			NIM:                 row.NIM,
 			Email:               row.Email,
+			ProgramStudi:        row.ProgramStudi,
+			Angkatan:            row.Angkatan,
 			SemesterMasukKuliah: row.SemesterMasukKuliah,
 		})
 		if err != nil {
@@ -95,6 +100,8 @@ type studentImportRow struct {
 	Name                string
 	NIM                 string
 	Email               string
+	ProgramStudi        string
+	Angkatan            int
 	SemesterMasukKuliah string
 }
 
@@ -184,8 +191,8 @@ func mapStudentImportRows(rawRows [][]string) ([]studentImportRow, error) {
 	}
 
 	columns := resolveStudentImportColumns(rawRows[headerIndex])
-	if columns.name < 0 || columns.nim < 0 || columns.email < 0 || columns.semesterMasukKuliah < 0 {
-		return nil, errs.BadRequest("Header wajib: name, nim, email, semester_masuk_kuliah")
+	if columns.name < 0 || columns.nim < 0 || columns.email < 0 || columns.programStudi < 0 || columns.angkatan < 0 || columns.semesterMasukKuliah < 0 {
+		return nil, errs.BadRequest("Header wajib: name, nim, email, program_studi, angkatan, semester_masuk_kuliah")
 	}
 
 	rows := make([]studentImportRow, 0, len(rawRows)-headerIndex-1)
@@ -195,11 +202,20 @@ func mapStudentImportRows(rawRows [][]string) ([]studentImportRow, error) {
 			continue
 		}
 
+		angkatan := 0
+		if angkatanStr := strings.TrimSpace(valueAt(raw, columns.angkatan)); angkatanStr != "" {
+			if val, err := strconv.Atoi(angkatanStr); err == nil {
+				angkatan = val
+			}
+		}
+
 		rows = append(rows, studentImportRow{
 			Row:                 idx + 1,
 			Name:                strings.TrimSpace(valueAt(raw, columns.name)),
 			NIM:                 strings.TrimSpace(valueAt(raw, columns.nim)),
 			Email:               strings.TrimSpace(valueAt(raw, columns.email)),
+			ProgramStudi:        strings.TrimSpace(valueAt(raw, columns.programStudi)),
+			Angkatan:            angkatan,
 			SemesterMasukKuliah: strings.TrimSpace(valueAt(raw, columns.semesterMasukKuliah)),
 		})
 	}
@@ -210,11 +226,13 @@ type studentImportColumns struct {
 	name                int
 	nim                 int
 	email               int
+	programStudi        int
+	angkatan            int
 	semesterMasukKuliah int
 }
 
 func resolveStudentImportColumns(header []string) studentImportColumns {
-	columns := studentImportColumns{name: -1, nim: -1, email: -1, semesterMasukKuliah: -1}
+	columns := studentImportColumns{name: -1, nim: -1, email: -1, programStudi: -1, angkatan: -1, semesterMasukKuliah: -1}
 	for idx, value := range header {
 		switch normalizeStudentImportHeader(value) {
 		case "name", "nama", "nama_mahasiswa", "student_name":
@@ -228,6 +246,14 @@ func resolveStudentImportColumns(header []string) studentImportColumns {
 		case "email", "alamat_email", "e_mail":
 			if columns.email < 0 {
 				columns.email = idx
+			}
+		case "program_studi", "prodi", "jurusan", "program_study":
+			if columns.programStudi < 0 {
+				columns.programStudi = idx
+			}
+		case "angkatan", "tahun_masuk", "tahun_angkatan":
+			if columns.angkatan < 0 {
+				columns.angkatan = idx
 			}
 		case "semester", "semester_masuk", "semester_masuk_kuliah":
 			if columns.semesterMasukKuliah < 0 {
@@ -292,6 +318,12 @@ func validateStudentImportRow(row studentImportRow, seenNIM map[string]int, seen
 	}
 	if !isValidImportEmail(row.Email) {
 		return "format email tidak valid"
+	}
+	if row.ProgramStudi == "" {
+		return "program studi wajib diisi"
+	}
+	if row.Angkatan <= 0 {
+		return "angkatan wajib diisi dan harus berupa angka positif"
 	}
 	if row.SemesterMasukKuliah == "" {
 		return "semester masuk kuliah wajib diisi"

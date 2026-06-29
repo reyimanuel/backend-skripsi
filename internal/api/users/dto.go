@@ -97,6 +97,8 @@ type CreateStudentInvitationRequest struct {
 	Name                string `json:"name" binding:"required,safehtml"`
 	NIM                 string `json:"nim" binding:"required"`
 	Email               string `json:"email" binding:"required,email"`
+	ProgramStudi        string `json:"program_studi" binding:"required,safehtml"`
+	Angkatan            int    `json:"angkatan" binding:"required"`
 	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
 }
 
@@ -105,6 +107,8 @@ type BulkStudentInvitationRowResult struct {
 	Name                string `json:"name,omitempty"`
 	NIM                 string `json:"nim,omitempty"`
 	Email               string `json:"email,omitempty"`
+	ProgramStudi        string `json:"program_studi,omitempty"`
+	Angkatan            int    `json:"angkatan,omitempty"`
 	SemesterMasukKuliah string `json:"semester_masuk_kuliah,omitempty"`
 	Status              string `json:"status"`
 	Error               string `json:"error,omitempty"`
@@ -118,11 +122,8 @@ type BulkStudentInvitationImportData struct {
 }
 
 type CompleteStudentInvitationRequest struct {
-	Token               string `form:"token" binding:"required"`
-	Password            string `form:"password" binding:"required,strongpassword"`
-	ProgramStudi        string `form:"program_studi" binding:"required,safehtml"`
-	Angkatan            int    `form:"angkatan" binding:"required"`
-	SemesterMasukKuliah string `form:"semester_masuk_kuliah"`
+	Token    string `json:"token" binding:"required"`
+	Password string `json:"password" binding:"required,strongpassword"`
 }
 
 type MeResponse struct {

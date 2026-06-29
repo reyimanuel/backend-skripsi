@@ -3,7 +3,6 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -585,6 +584,8 @@ func (s *Service) CreateStudentInvitation(adminID uint, req CreateStudentInvitat
 		Name:                req.Name,
 		NIM:                 req.NIM,
 		Email:               req.Email,
+		ProgramStudi:        req.ProgramStudi,
+		Angkatan:            req.Angkatan,
 		SemesterMasukKuliah: req.SemesterMasukKuliah,
 	}
 	if err := s.createStudentInvitationRecord(adminID, input); err != nil {
@@ -598,6 +599,8 @@ type studentInvitationInput struct {
 	Name                string
 	NIM                 string
 	Email               string
+	ProgramStudi        string
+	Angkatan            int
 	SemesterMasukKuliah string
 }
 
@@ -617,6 +620,14 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	}
 	if strings.TrimSpace(input.SemesterMasukKuliah) != "" && semesterMasukKuliah == "" {
 		return errs.BadRequest("semester masuk kuliah harus Ganjil atau Genap")
+	}
+
+	programStudi := strings.TrimSpace(input.ProgramStudi)
+	if programStudi == "" {
+		return errs.BadRequest("program studi wajib diisi")
+	}
+	if input.Angkatan <= 0 {
+		return errs.BadRequest("angkatan wajib diisi")
 	}
 
 	if _, err := s.Repo.GetByNIM(nim); err == nil {
@@ -654,8 +665,8 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	}
 	student := &migration.Student{
 		NIM:                     nim,
-		ProgramStudi:            "",
-		Angkatan:                0,
+		ProgramStudi:            programStudi,
+		Angkatan:                input.Angkatan,
 		SemesterMasukKuliah:     semesterMasukKuliah,
 		AdminVerificationStatus: "invited",
 	}
@@ -683,13 +694,13 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	invitationLink := buildStudentInvitationLink(invitationToken)
 	if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), user.Email, user.Name, nim, inviterName, invitationLink); err != nil {
 		log.Printf("error sending student invitation email: user_id=%d err=%v", user.ID, err)
-		return invitationEmailError("mahasiswa", err)
+		return invitationEmailError()
 	}
 
 	return nil
 }
 
-func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest, file *multipart.FileHeader) (*Response, error) {
+func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest) (*Response, error) {
 	invitation, err := token.ValidateStudentInvitationToken(strings.TrimSpace(req.Token))
 	if err != nil {
 		return nil, errs.Unauthorized("Link aktivasi mahasiswa tidak valid atau sudah kedaluwarsa")
@@ -728,41 +739,10 @@ func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest
 		return nil, errs.BadRequest("Undangan mahasiswa sudah diproses")
 	}
 
-	ext := strings.ToLower(filepath.Ext(file.Filename))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-		return nil, errs.BadRequest("file kredensial harus berupa gambar (jpg/jpeg/png)")
-	}
-
-	fileName := helpers.GenerateUniqueFileName(file.Filename)
-	filePath := filepath.Join("public", "images", "student-cards", fileName)
-	if err := helpers.SaveUploadedFile(file, filePath); err != nil {
-		log.Printf("error menyimpan file kredensial mahasiswa undangan: %v", err)
-		return nil, errs.InternalServerError("gagal menyimpan file kredensial")
-	}
-
 	hashedPwd, err := helpers.HashPassword(req.Password)
 	if err != nil {
-		_ = os.Remove(filePath)
 		log.Printf("error hashing student invitation password: user_id=%d err=%v", usr.ID, err)
 		return nil, errs.InternalServerError("gagal memproses password")
-	}
-
-	programStudi := strings.TrimSpace(req.ProgramStudi)
-	if programStudi == "" {
-		_ = os.Remove(filePath)
-		return nil, errs.BadRequest("program studi wajib diisi")
-	}
-	if req.Angkatan <= 0 {
-		_ = os.Remove(filePath)
-		return nil, errs.BadRequest("angkatan wajib diisi")
-	}
-	semesterMasukKuliah := strings.TrimSpace(student.SemesterMasukKuliah)
-	if strings.TrimSpace(req.SemesterMasukKuliah) != "" {
-		semesterMasukKuliah = normalizeSemesterMasukKuliah(req.SemesterMasukKuliah)
-	}
-	if strings.TrimSpace(req.SemesterMasukKuliah) != "" && semesterMasukKuliah == "" {
-		_ = os.Remove(filePath)
-		return nil, errs.BadRequest("semester masuk kuliah harus Ganjil atau Genap")
 	}
 
 	now := time.Now()
@@ -776,12 +756,7 @@ func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest
 		}
 
 		if err := s.Repo.UpdateStudentFields(tx, student.ID, map[string]any{
-			"program_studi":             programStudi,
-			"angkatan":                  req.Angkatan,
-			"semester_masuk_kuliah":     semesterMasukKuliah,
-			"kredensial_path":           filePath,
 			"admin_verification_status": "approved",
-			"admin_verified_by":         nil,
 			"admin_verified_at":         now,
 			"rejection_reason":          "",
 		}); err != nil {
@@ -792,9 +767,6 @@ func (s *Service) CompleteStudentInvitation(req CompleteStudentInvitationRequest
 		return nil
 	})
 	if err != nil {
-		if removeErr := os.Remove(filePath); removeErr != nil && !os.IsNotExist(removeErr) {
-			log.Printf("gagal menghapus file kredensial %s: %v", filePath, removeErr)
-		}
 		return nil, err
 	}
 
@@ -916,7 +888,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 	invitationLink := buildStaffInvitationLink(invitationToken)
 	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), user.Email, user.Name, inviterName, invitationLink); err != nil {
 		log.Printf("error sending staff invitation email: user_id=%d err=%v", user.ID, err)
-		return nil, invitationEmailError("staff", err)
+		return nil, invitationEmailError()
 	}
 
 	return &Response{StatusCode: http.StatusCreated, Message: "Undangan aktivasi staff berhasil dikirim ke email pengguna."}, nil
@@ -954,7 +926,7 @@ func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error)
 		link := buildStudentInvitationLink(tokenValue)
 		if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, student.NIM, inviterName, link); err != nil {
 			log.Printf("error resending student invitation email: user_id=%d err=%v", usr.ID, err)
-			return nil, invitationEmailError("mahasiswa", err)
+			return nil, invitationEmailError()
 		}
 		realtime.Publish("users", "student-invitation-resent", usr.ID)
 		return &Response{StatusCode: http.StatusOK, Message: "Link aktivasi mahasiswa berhasil dikirim ulang"}, nil
@@ -980,7 +952,7 @@ func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error)
 	link := buildStaffInvitationLink(tokenValue)
 	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, inviterName, link); err != nil {
 		log.Printf("error resending staff invitation email: user_id=%d err=%v", usr.ID, err)
-		return nil, invitationEmailError("staff", err)
+		return nil, invitationEmailError()
 	}
 
 	realtime.Publish("users", "staff-invitation-resent", usr.ID)
@@ -1001,8 +973,8 @@ func validateStaffName(value string, label string) error {
 	return nil
 }
 
-func invitationEmailError(kind string, err error) error {
-	return errs.BadRequest(fmt.Sprintf("Akun %s sudah dibuat, tetapi email undangan gagal dikirim. Periksa konfigurasi SMTP lalu gunakan tombol resend. Detail: %v", kind, err))
+func invitationEmailError() error {
+	return errs.BadRequest("email gagal dikirim. Silakan coba kirim lagi.")
 }
 
 func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, signatureFile *multipart.FileHeader) (*Response, error) {

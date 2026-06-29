@@ -208,19 +208,13 @@ func (h *Handler) ResendInvitation(ctx *gin.Context) {
 
 func (h *Handler) CompleteStudentInvitation(ctx *gin.Context) {
 	var req CompleteStudentInvitationRequest
-	if err := ctx.ShouldBind(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		errs.HandlerError(ctx, errs.BadRequest("Data aktivasi mahasiswa tidak valid"))
 		log.Printf("error binding complete student invitation payload: %v", err)
 		return
 	}
 
-	file, err := ctx.FormFile("kredensial")
-	if err != nil {
-		errs.HandlerError(ctx, errs.BadRequest("File kredensial wajib dilampirkan"))
-		return
-	}
-
-	response, err := h.Service.CompleteStudentInvitation(req, file)
+	response, err := h.Service.CompleteStudentInvitation(req)
 	if err != nil {
 		errs.HandlerError(ctx, err)
 		return
