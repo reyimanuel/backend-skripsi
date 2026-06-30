@@ -79,9 +79,11 @@ type LetterHistoryDetail struct {
 	LetterNumber *string            `json:"letter_number,omitempty"`
 	Payload      map[string]any     `json:"payload"`
 	Attachments  []AttachmentItem   `json:"attachments"`
-	Student      *StudentSummary    `json:"student,omitempty"`
-	PreviewURL   string             `json:"preview_url"`
-	CreatedAt    time.Time          `json:"created_at"`
+	Student             *StudentSummary    `json:"student,omitempty"`
+	PreviewURL          string             `json:"preview_url"`
+	CanProcess          bool               `json:"can_process"`
+	CurrentAssigneeName *string            `json:"current_assignee_name,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
 	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
@@ -133,9 +135,10 @@ type LetterListItem struct {
 	LetterType LetterTypeSummary `json:"letter_type"`
 	Student    *StudentSummary   `json:"student,omitempty"`
 	PreviewURL string            `json:"preview_url"`
-	HistoryURL string            `json:"history_url"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	HistoryURL          string            `json:"history_url"`
+	CurrentAssigneeName *string           `json:"current_assignee_name,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 type PaginationMeta struct {

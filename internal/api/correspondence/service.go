@@ -165,7 +165,15 @@ func (s *Service) PreviewLetter(letterID uint, userID uint, isAdmin bool, isAtas
 					return errs.Forbidden("Hanya atasan yang dapat melihat preview surat ini")
 				}
 				if letter.SignedByID == nil || *letter.SignedByID != atasan.ID {
-					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+					var hasActed bool
+					tx.Model(&migration.LetterHistory{}).
+						Where("letter_id = ? AND actor_id = ?", letter.ID, userID).
+						Select("count(id) > 0").
+						Scan(&hasActed)
+
+					if !hasActed {
+						return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+					}
 				}
 			} else {
 				student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
@@ -1226,14 +1234,28 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 			return err
 		}
 
+		var canProcess bool
+		if isAdmin {
+			canProcess = (letter.Status == statusSubmitted || letter.Status == statusApproved)
+		}
+
 		if !isAdmin {
 			if isAtasan {
 				atasan, err := s.UsersRepo.GetActiveAtasanByUserID(tx, userID)
 				if err != nil {
 					return errs.Forbidden("Hanya atasan yang dapat melihat riwayat surat ini")
 				}
+				canProcess = (letter.Status == statusForwarded && letter.SignedByID != nil && *letter.SignedByID == atasan.ID)
 				if letter.SignedByID == nil || *letter.SignedByID != atasan.ID {
-					return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+					var hasActed bool
+					tx.Model(&migration.LetterHistory{}).
+						Where("letter_id = ? AND actor_id = ?", letter.ID, userID).
+						Select("count(id) > 0").
+						Scan(&hasActed)
+
+					if !hasActed {
+						return errs.Forbidden("Anda tidak memiliki akses ke surat ini")
+					}
 				}
 			} else {
 				student, err := s.UsersRepo.GetStudentByUserID(tx, userID)
@@ -1278,6 +1300,19 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 			return errs.InternalServerError("Terjadi kesalahan dalam membaca data surat")
 		}
 
+		var currentAssigneeName *string
+		if letter.Status == statusForwarded && letter.SignedByID != nil {
+			var assignee struct{ Name string }
+			err := tx.Table("atasans").
+				Select("users.name").
+				Joins("JOIN users ON users.id = atasans.user_id").
+				Where("atasans.id = ?", *letter.SignedByID).
+				Scan(&assignee).Error
+			if err == nil && assignee.Name != "" {
+				currentAssigneeName = &assignee.Name
+			}
+		}
+
 		detail = LetterHistoryDetail{
 			ID:           letter.ID,
 			LetterTypeID: letter.LetterTypeID,
@@ -1299,9 +1334,11 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 				Name:      student.User.Name,
 				NIM:       student.NIM,
 			},
-			PreviewURL: helpers.ToAbsoluteURL(fmt.Sprintf("/api/correspondence/preview/%d", letter.ID)),
-			CreatedAt:  letter.CreatedAt,
-			UpdatedAt:  letter.UpdatedAt,
+			PreviewURL:          helpers.ToAbsoluteURL(fmt.Sprintf("/api/v1/correspondence/preview/%d", letter.ID)),
+			CanProcess:          canProcess,
+			CurrentAssigneeName: currentAssigneeName,
+			CreatedAt:           letter.CreatedAt,
+			UpdatedAt:           letter.UpdatedAt,
 		}
 
 		out = make([]LetterHistoryItem, 0, len(histories))
@@ -1451,6 +1488,12 @@ func (s *Service) ListLetters(userID uint, isAdmin bool, q ListLettersQuery) (*R
 				Student:    student,
 				PreviewURL: previewURL,
 				HistoryURL: historyURL,
+				CurrentAssigneeName: func() *string {
+					if l.Status == statusForwarded && l.SignedBy != nil {
+						return &l.SignedBy.User.Name
+					}
+					return nil
+				}(),
 				CreatedAt:  l.CreatedAt,
 				UpdatedAt:  l.UpdatedAt,
 			})

@@ -179,6 +179,8 @@ func (r *Repository) ListLetters(tx *gorm.DB, p ListLettersParams) ([]migration.
 		Preload("LetterType").
 		Preload("Student").
 		Preload("Student.User").
+		Preload("SignedBy").
+		Preload("SignedBy.User").
 		Joins("LEFT JOIN students ON students.id = letters.student_id").
 		Joins("LEFT JOIN users ON users.id = students.user_id").
 		Joins("LEFT JOIN letter_types ON letter_types.id = letters.letter_type_id")

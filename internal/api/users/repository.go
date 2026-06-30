@@ -145,10 +145,6 @@ func (r *Repository) UpdateStudentAdminVerification(tx *gorm.DB, studentID uint,
 	return tx.Model(&migration.Student{}).Where("id = ?", studentID).Updates(updates).Error
 }
 
-func (r *Repository) ClearStudentKredensial(tx *gorm.DB, studentID uint) error {
-	return tx.Model(&migration.Student{}).Where("id = ?", studentID).Update("kredensial_path", "").Error
-}
-
 func (r *Repository) UpdateStudentFields(tx *gorm.DB, studentID uint, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil

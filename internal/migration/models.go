@@ -101,7 +101,6 @@ type Student struct {
 	ProgramStudi            string `gorm:"size:100;not null"`
 	Angkatan                int
 	SemesterMasukKuliah     string `gorm:"column:semester_masuk_kuliah;size:10"`
-	KredensialPath          string `gorm:"size:255"` // path to uploaded credential (KTM/KRS)
 	AdminVerificationStatus string `gorm:"size:20;not null;default:pending;index"`
 	AdminVerifiedBy         *uint  `gorm:"index"`
 	AdminVerifier           *User  `gorm:"foreignKey:AdminVerifiedBy;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`

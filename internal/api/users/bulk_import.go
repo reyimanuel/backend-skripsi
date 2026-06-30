@@ -64,10 +64,14 @@ func (s *Service) BulkImportStudentInvitations(adminID uint, file *multipart.Fil
 			SemesterMasukKuliah: row.SemesterMasukKuliah,
 		})
 		if err != nil {
-			result.Status = "failed"
-			result.Error = publicErrorMessage(err)
-			results = append(results, result)
-			continue
+			if errors.Is(err, ErrInvitationEmail) {
+				// Treat as success in DB, email failed but account created
+			} else {
+				result.Status = "failed"
+				result.Error = publicErrorMessage(err)
+				results = append(results, result)
+				continue
+			}
 		}
 
 		result.Status = "success"

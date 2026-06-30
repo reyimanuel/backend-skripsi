@@ -169,7 +169,6 @@ func (s *Service) GetPendingStudents(page, pageSize int) (*Response, error) {
 			ProgramStudi:            student.ProgramStudi,
 			Angkatan:                student.Angkatan,
 			SemesterMasukKuliah:     student.SemesterMasukKuliah,
-			Kredensial:              helpers.ToAbsoluteURL(student.KredensialPath),
 			AdminVerificationStatus: student.AdminVerificationStatus,
 			RejectionReason:         student.RejectionReason,
 			EmailVerifiedAt:         student.User.EmailVerifiedAt,
@@ -390,15 +389,12 @@ func (s *Service) AdminDeleteUser(userID uint) (*Response, error) {
 }
 
 func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStudentRequest) (*Response, error) {
-	var kredensialPath string
-
 	log.Printf("approving student: student_id=%d admin_id=%d payload_present=%t", studentID, adminID, req != nil)
 	err := s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		student, err := s.resolvePendingStudentTx(tx, studentID)
 		if err != nil {
 			return err
 		}
-		kredensialPath = student.KredensialPath
 
 		userUpdates := map[string]any{}
 		studentUpdates := map[string]any{}
@@ -444,24 +440,11 @@ func (s *Service) ApproveStudent(studentID uint, adminID uint, req *ApproveStude
 			return errs.InternalServerError("gagal menyetujui mahasiswa")
 		}
 
-		if kredensialPath != "" {
-			if err := s.Repo.ClearStudentKredensial(tx, student.ID); err != nil {
-				log.Printf("erroxr membersihkan path kredensial mahasiswa %d: %v", studentID, err)
-				return errs.InternalServerError("gagal memproses persetujuan mahasiswa")
-			}
-		}
-
 		return nil
 	})
 
 	if err != nil {
 		return nil, err
-	}
-
-	if kredensialPath != "" {
-		if err := os.Remove(kredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", kredensialPath, err)
-		}
 	}
 
 	realtime.PublishTopics([]string{"users", "pending-students"}, "student-approved", studentID)
@@ -478,13 +461,6 @@ func (s *Service) RejectStudent(studentID uint, adminID uint, reason string) (*R
 	if err := s.Repo.UpdateStudentAdminVerification(s.Repo.DB, student.ID, "rejected", &adminID, strings.TrimSpace(reason)); err != nil {
 		log.Printf("error reject student %d: %v", studentID, err)
 		return nil, errs.InternalServerError("gagal menolak mahasiswa")
-	}
-
-	if student.KredensialPath != "" {
-		if err := os.Remove(student.KredensialPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("gagal menghapus file kredensial %s: %v", student.KredensialPath, err)
-			return nil, errs.InternalServerError("gagal menghapus file kredensial mahasiswa")
-		}
 	}
 
 	realtime.PublishTopics([]string{"users", "pending-students"}, "student-rejected", studentID)
@@ -551,7 +527,6 @@ func (s *Service) GetMe(userID uint) (*Response, error) {
 		resp.ProgramStudi = student.ProgramStudi
 		resp.Angkatan = student.Angkatan
 		resp.SemesterMasukKuliah = student.SemesterMasukKuliah
-		resp.KredensialPath = helpers.ToAbsoluteURL(student.KredensialPath)
 		resp.AdminVerificationStatus = student.AdminVerificationStatus
 		resp.AdminVerifiedAt = student.AdminVerifiedAt
 		resp.RejectionReason = student.RejectionReason
@@ -589,6 +564,9 @@ func (s *Service) CreateStudentInvitation(adminID uint, req CreateStudentInvitat
 		SemesterMasukKuliah: req.SemesterMasukKuliah,
 	}
 	if err := s.createStudentInvitationRecord(adminID, input); err != nil {
+		if errors.Is(err, ErrInvitationEmail) {
+			return &Response{StatusCode: http.StatusCreated, Message: "Akun mahasiswa sudah dibuat, tetapi email undangan gagal dikirim."}, nil
+		}
 		return nil, err
 	}
 
@@ -618,8 +596,8 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	if nim == "" {
 		return errs.BadRequest("NIM mahasiswa wajib diisi")
 	}
-	if strings.TrimSpace(input.SemesterMasukKuliah) != "" && semesterMasukKuliah == "" {
-		return errs.BadRequest("semester masuk kuliah harus Ganjil atau Genap")
+	if semesterMasukKuliah == "" {
+		return errs.BadRequest("semester masuk kuliah wajib diisi dan harus Ganjil atau Genap")
 	}
 
 	programStudi := strings.TrimSpace(input.ProgramStudi)
@@ -694,7 +672,7 @@ func (s *Service) createStudentInvitationRecord(adminID uint, input studentInvit
 	invitationLink := buildStudentInvitationLink(invitationToken)
 	if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), user.Email, user.Name, nim, inviterName, invitationLink); err != nil {
 		log.Printf("error sending student invitation email: user_id=%d err=%v", user.ID, err)
-		return invitationEmailError()
+		return ErrInvitationEmail
 	}
 
 	return nil
@@ -796,9 +774,26 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 		return nil, errs.BadRequest("email staff maksimal 254 karakter")
 	}
 	jabatan := strings.TrimSpace(req.Jabatan)
-	if roleCode == "ATASAN" && jabatan == "" {
-		return nil, errs.BadRequest("jabatan wajib diisi untuk role atasan")
+	nip := strings.TrimSpace(req.NIP)
+	pangkat := strings.TrimSpace(req.Pangkat)
+
+	if roleCode == "ATASAN" {
+		if jabatan == "" {
+			return nil, errs.BadRequest("jabatan wajib diisi untuk role atasan")
+		}
+		if nip == "" {
+			return nil, errs.BadRequest("NIP wajib diisi untuk role atasan")
+		}
+		if !staffNIPPattern.MatchString(nip) {
+			return nil, errs.BadRequest("NIP harus 8-30 digit angka")
+		}
+		if pangkat != "" {
+			if err := validateStaffName(pangkat, "pangkat"); err != nil {
+				return nil, err
+			}
+		}
 	}
+
 	if roleCode == "ATASAN" && jabatan != "" {
 		normalizedJabatan, ok := normalizeAtasanJabatan(jabatan)
 		if !ok {
@@ -861,6 +856,8 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 
 		atasan := &migration.Atasan{
 			UserID:   user.ID,
+			NIP:      nip,
+			Pangkat:  pangkat,
 			Jabatan:  jabatan,
 			IsOnDuty: true,
 		}
@@ -888,7 +885,7 @@ func (s *Service) CreateStaff(adminID uint, req CreateStaffRequest) (*Response, 
 	invitationLink := buildStaffInvitationLink(invitationToken)
 	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), user.Email, user.Name, inviterName, invitationLink); err != nil {
 		log.Printf("error sending staff invitation email: user_id=%d err=%v", user.ID, err)
-		return nil, invitationEmailError()
+		return &Response{StatusCode: http.StatusCreated, Message: "Akun staff sudah dibuat, tetapi email undangan gagal dikirim."}, nil
 	}
 
 	return &Response{StatusCode: http.StatusCreated, Message: "Undangan aktivasi staff berhasil dikirim ke email pengguna."}, nil
@@ -926,7 +923,7 @@ func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error)
 		link := buildStudentInvitationLink(tokenValue)
 		if err := helpers.SendStudentInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, student.NIM, inviterName, link); err != nil {
 			log.Printf("error resending student invitation email: user_id=%d err=%v", usr.ID, err)
-			return nil, invitationEmailError()
+			return nil, errs.BadRequest("Email gagal dikirim. Silakan coba kirim lagi.")
 		}
 		realtime.Publish("users", "student-invitation-resent", usr.ID)
 		return &Response{StatusCode: http.StatusOK, Message: "Link aktivasi mahasiswa berhasil dikirim ulang"}, nil
@@ -952,7 +949,7 @@ func (s *Service) ResendInvitation(adminID uint, userID uint) (*Response, error)
 	link := buildStaffInvitationLink(tokenValue)
 	if err := helpers.SendStaffInvitationEmailWithContext(context.Background(), usr.Email, usr.Name, inviterName, link); err != nil {
 		log.Printf("error resending staff invitation email: user_id=%d err=%v", usr.ID, err)
-		return nil, invitationEmailError()
+		return nil, errs.BadRequest("Email gagal dikirim. Silakan coba kirim lagi.")
 	}
 
 	realtime.Publish("users", "staff-invitation-resent", usr.ID)
@@ -973,8 +970,10 @@ func validateStaffName(value string, label string) error {
 	return nil
 }
 
+var ErrInvitationEmail = errors.New("email_failed")
+
 func invitationEmailError() error {
-	return errs.BadRequest("email gagal dikirim. Silakan coba kirim lagi.")
+	return ErrInvitationEmail
 }
 
 func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, signatureFile *multipart.FileHeader) (*Response, error) {
@@ -1006,28 +1005,10 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 		log.Printf("error hashing staff invitation password: user_id=%d err=%v", usr.ID, err)
 		return nil, errs.InternalServerError("gagal memproses password")
 	}
-
 	roleCode := strings.ToUpper(strings.TrimSpace(invitation.RoleCode))
 	isAtasanRole := constants.IsAtasanRoleCode(roleCode)
 	signaturePath := ""
 	if isAtasanRole {
-		nip := strings.TrimSpace(req.NIP)
-		if nip == "" {
-			return nil, errs.BadRequest("NIP wajib diisi")
-		}
-		if !staffNIPPattern.MatchString(nip) {
-			return nil, errs.BadRequest("NIP harus 8-30 digit angka")
-		}
-		if strings.TrimSpace(req.Pangkat) != "" {
-			if err := validateStaffName(strings.TrimSpace(req.Pangkat), "pangkat"); err != nil {
-				return nil, err
-			}
-		}
-		if strings.TrimSpace(req.Jabatan) != "" {
-			if err := validateStaffName(strings.TrimSpace(req.Jabatan), "jabatan"); err != nil {
-				return nil, err
-			}
-		}
 		if signatureFile == nil {
 			return nil, errs.BadRequest("File tanda tangan wajib dilampirkan")
 		}
@@ -1047,46 +1028,6 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 		}
 	}
 
-	nip := strings.TrimSpace(req.NIP)
-	pangkat := strings.TrimSpace(req.Pangkat)
-	jabatan := strings.TrimSpace(req.Jabatan)
-	if isAtasanRole && jabatan != "" {
-		normalizedJabatan, ok := normalizeAtasanJabatan(jabatan)
-		if !ok {
-			if signaturePath != "" {
-				_ = os.Remove(signaturePath)
-			}
-			return nil, errs.BadRequest("jabatan harus salah satu dari: Dekan, Wakil Dekan 1, Wakil Dekan 2, Wakil Dekan 3, Koprodi, Kabag, Kajur")
-		}
-		jabatan = normalizedJabatan
-	}
-	if isAtasanRole && jabatan == "" {
-		if existingAtasan, err := s.Repo.GetAtasanByUserID(s.Repo.DB, usr.ID); err == nil && existingAtasan != nil {
-			jabatan = strings.TrimSpace(existingAtasan.Jabatan)
-		}
-		if jabatan == "" {
-			jabatan = defaultStaffJabatan(roleCode)
-		}
-	}
-	if len(nip) > 50 {
-		if signaturePath != "" {
-			_ = os.Remove(signaturePath)
-		}
-		return nil, errs.BadRequest("NIP maksimal 50 karakter")
-	}
-	if len(pangkat) > 100 {
-		if signaturePath != "" {
-			_ = os.Remove(signaturePath)
-		}
-		return nil, errs.BadRequest("Pangkat maksimal 100 karakter")
-	}
-	if len(jabatan) > 100 {
-		if signaturePath != "" {
-			_ = os.Remove(signaturePath)
-		}
-		return nil, errs.BadRequest("Jabatan maksimal 100 karakter")
-	}
-
 	now := time.Now()
 	err = s.Repo.DB.Transaction(func(tx *gorm.DB) error {
 		if err := s.Repo.UpdateUserFields(tx, usr.ID, map[string]any{
@@ -1097,7 +1038,7 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 			return errs.InternalServerError("gagal mengaktifkan akun staff")
 		}
 
-		if !isAtasanRole && signaturePath == "" && nip == "" && pangkat == "" && jabatan == "" {
+		if !isAtasanRole {
 			return nil
 		}
 
@@ -1108,16 +1049,17 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 		}
 
 		updates := map[string]any{
-			"nip":       nip,
-			"pangkat":   pangkat,
-			"jabatan":   jabatan,
 			"is_active": true,
 		}
 		if signaturePath != "" {
-			updates["signature"] = signaturePath
+			updates["signature"] = "/api/images/signatures/" + filepath.Base(signaturePath)
 		}
 
 		if atasan != nil {
+			if signaturePath != "" && atasan.Signature != "" {
+				oldPath := filepath.Join("public", "images", "signatures", filepath.Base(atasan.Signature))
+				_ = os.Remove(oldPath)
+			}
 			if err := tx.Model(&migration.Atasan{}).Where("id = ?", atasan.ID).Updates(updates).Error; err != nil {
 				log.Printf("error updating atasan during staff activation: user_id=%d err=%v", usr.ID, err)
 				return errs.InternalServerError("gagal memperbarui data jabatan staff")
@@ -1125,13 +1067,13 @@ func (s *Service) CompleteStaffInvitation(req CompleteStaffInvitationRequest, si
 			return nil
 		}
 
+		// atasan should exist because admin created it, but fallback just in case
 		atasan = &migration.Atasan{
 			UserID:    usr.ID,
-			NIP:       nip,
-			Pangkat:   pangkat,
-			Jabatan:   jabatan,
-			Signature: signaturePath,
 			IsOnDuty:  true,
+		}
+		if signaturePath != "" {
+			atasan.Signature = "/api/images/signatures/" + filepath.Base(signaturePath)
 		}
 		if err := tx.Create(atasan).Error; err != nil {
 			log.Printf("error creating atasan during staff activation: user_id=%d err=%v", usr.ID, err)

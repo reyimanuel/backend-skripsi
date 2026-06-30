@@ -35,7 +35,6 @@ type PendingStudentResponse struct {
 	ProgramStudi            string     `json:"program_studi"`
 	Angkatan                int        `json:"angkatan"`
 	SemesterMasukKuliah     string     `json:"semester_masuk_kuliah"`
-	Kredensial              string     `json:"kredensial,omitempty"`
 	AdminVerificationStatus string     `json:"admin_verification_status"`
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
 	RejectionReason         string     `json:"rejection_reason,omitempty"`
@@ -142,7 +141,6 @@ type MeResponse struct {
 	ProgramStudi            string     `json:"program_studi,omitempty"`
 	Angkatan                int        `json:"angkatan,omitempty"`
 	SemesterMasukKuliah     string     `json:"semester_masuk_kuliah,omitempty"`
-	KredensialPath          string     `json:"kredensial_path,omitempty"`
 	AdminVerificationStatus string     `json:"admin_verification_status,omitempty"`
 	AdminVerifiedAt         *time.Time `json:"admin_verified_at,omitempty"`
 	RejectionReason         string     `json:"rejection_reason,omitempty"`
@@ -161,6 +159,8 @@ type CreateStaffRequest struct {
 	Email    string `form:"email" binding:"required,email"`
 	RoleCode string `form:"role_code" binding:"required,oneof=ADMIN ATASAN"`
 	Jabatan  string `form:"jabatan"`
+	NIP      string `form:"nip"`
+	Pangkat  string `form:"pangkat"`
 }
 
 type CompleteStaffInvitationRequest struct {

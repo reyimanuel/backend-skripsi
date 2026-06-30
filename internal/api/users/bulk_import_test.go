@@ -4,8 +4,8 @@ import "testing"
 
 func TestMapStudentImportRowsIncludesSemesterMasukKuliah(t *testing.T) {
 	rows, err := mapStudentImportRows([][]string{
-		{"name", "nim", "email", "semester_masuk_kuliah"},
-		{"Miracle", "220211060001", "miracle@student.unsrat.ac.id", "Ganjil"},
+		{"name", "nim", "email", "program_studi", "angkatan", "semester_masuk_kuliah"},
+		{"Miracle", "220211060001", "miracle@student.unsrat.ac.id", "Informatika", "2022", "Ganjil"},
 	})
 	if err != nil {
 		t.Fatalf("mapStudentImportRows: %v", err)
@@ -20,8 +20,8 @@ func TestMapStudentImportRowsIncludesSemesterMasukKuliah(t *testing.T) {
 
 func TestMapStudentImportRowsAcceptsSemesterAlias(t *testing.T) {
 	rows, err := mapStudentImportRows([][]string{
-		{"nama", "nim", "alamat_email", "semester"},
-		{"Yuliet", "220211060002", "yuliet@student.unsrat.ac.id", "Genap"},
+		{"nama", "nim", "alamat_email", "program_studi", "angkatan", "semester"},
+		{"Yuliet", "220211060002", "yuliet@student.unsrat.ac.id", "Informatika", "2022", "Genap"},
 	})
 	if err != nil {
 		t.Fatalf("mapStudentImportRows: %v", err)
@@ -40,6 +40,8 @@ func TestValidateStudentImportRowRequiresValidSemesterMasukKuliah(t *testing.T) 
 		Name:                "Miracle",
 		NIM:                 "220211060001",
 		Email:               "miracle@student.unsrat.ac.id",
+		ProgramStudi:        "Informatika",
+		Angkatan:            2022,
 		SemesterMasukKuliah: "Semester 1",
 	}
 
