@@ -85,7 +85,7 @@ func (r *Repository) UpdateLetterType(tx *gorm.DB, id uint, code, name, descript
 
 func (r *Repository) GetLetterByID(tx *gorm.DB, letterID uint) (*migration.Letter, error) {
 	var letter migration.Letter
-	if err := tx.Where("id = ?", letterID).First(&letter).Error; err != nil {
+	if err := tx.Preload("LetterType").Preload("Student").Where("id = ?", letterID).First(&letter).Error; err != nil {
 		return nil, err
 	}
 	return &letter, nil
