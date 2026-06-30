@@ -1303,10 +1303,10 @@ func (s *Service) GetHistoryAndDetail(letterID uint, userID uint, isAdmin bool, 
 		var currentAssigneeName *string
 		if letter.Status == statusForwarded && letter.SignedByID != nil {
 			var assignee struct{ Name string }
-			err := tx.Table("atasans").
+			err := tx.Table("atasan").
 				Select("users.name").
-				Joins("JOIN users ON users.id = atasans.user_id").
-				Where("atasans.id = ?", *letter.SignedByID).
+				Joins("JOIN users ON users.id = atasan.user_id").
+				Where("atasan.id = ?", *letter.SignedByID).
 				Scan(&assignee).Error
 			if err == nil && assignee.Name != "" {
 				currentAssigneeName = &assignee.Name
